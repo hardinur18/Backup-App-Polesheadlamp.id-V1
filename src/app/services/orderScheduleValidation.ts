@@ -12,6 +12,8 @@ const INACTIVE_BOOKING_SCHEDULE_STATUSES = new Set<ProspectBooking["status"]>([
   "reschedule",
 ]);
 
+const NON_BLOCKING_BOOKING_LEAD_STATUSES = new Set(["Cancel", "Closing"]);
+
 export interface TechnicianScheduleLike {
   userId: string;
   date: string;
@@ -95,12 +97,49 @@ export function isInactiveProspectBookingScheduleStatus(status?: ProspectBooking
   return Boolean(status && INACTIVE_BOOKING_SCHEDULE_STATUSES.has(status));
 }
 
-function isIgnoredBookingLead(
+async function getNonBlockingBookingLeadIds(
+  bookingRows: Array<{ lead_id?: string | null }>,
+) {
+  const leadIds = Array.from(
+    new Set(
+      bookingRows
+        .map((row) => normalizeScheduleValue(row.lead_id))
+        .filter(Boolean),
+    ),
+  );
+
+  if (leadIds.length === 0) {
+    return new Set<string>();
+  }
+
+  const { data, error } = await supabase
+    .from("leads")
+    .select("id, status")
+    .in("id", leadIds);
+
+  if (error) {
+    throw error;
+  }
+
+  return new Set(
+    (data || [])
+      .filter((lead) => NON_BLOCKING_BOOKING_LEAD_STATUSES.has(String(lead.status)))
+      .map((lead) => normalizeScheduleValue(lead.id))
+      .filter(Boolean),
+  );
+}
+
+function isNonBlockingBookingLead(
   leadId: string | null | undefined,
+  nonBlockingLeadIds: ReadonlySet<string>,
   options?: ScheduleValidationOptions,
 ) {
   const normalizedLeadId = normalizeScheduleValue(leadId);
-  return Boolean(normalizedLeadId && options?.ignoredBookingLeadIds?.has(normalizedLeadId));
+  return Boolean(
+    normalizedLeadId &&
+      (options?.ignoredBookingLeadIds?.has(normalizedLeadId) ||
+        nonBlockingLeadIds.has(normalizedLeadId)),
+  );
 }
 
 function isActiveProspectBookingSchedule(booking: ProspectBooking) {
@@ -584,11 +623,12 @@ export async function validateOrderScheduleFromDB(
 
     // 3. Check existing prospect booking conflicts
     const normalizedLeadId = normalizeScheduleValue(order.leadId);
+    const nonBlockingBookingLeadIds = await getNonBlockingBookingLeadIds(bookingRows || []);
     const conflictingBookings = (bookingRows || []).filter((row) => {
       if (row.order_id) return false;
       if (INACTIVE_BOOKING_SCHEDULE_STATUSES.has(row.status)) return false;
       if (normalizedLeadId && normalizeScheduleValue(row.lead_id) === normalizedLeadId) return false;
-      if (isIgnoredBookingLead(row.lead_id, options)) return false;
+      if (isNonBlockingBookingLead(row.lead_id, nonBlockingBookingLeadIds, options)) return false;
       return normalizeOrderTime(row.schedule_time) === normalizedTime;
     });
 
@@ -676,11 +716,12 @@ export async function validateProspectBookingScheduleFromDB(
       return `Jadwal bentrok. Teknisi ${technicianName} sudah punya order aktif pada ${booking.scheduleDate} ${normalizedTime} untuk ${customerNames}.`;
     }
 
+    const nonBlockingBookingLeadIds = await getNonBlockingBookingLeadIds(bookingRows || []);
     const conflictingBookings = (bookingRows || []).filter((row) => {
       if (booking.id && row.id === booking.id) return false;
       if (row.order_id) return false;
       if (INACTIVE_BOOKING_SCHEDULE_STATUSES.has(row.status)) return false;
-      if (isIgnoredBookingLead(row.lead_id, options)) return false;
+      if (isNonBlockingBookingLead(row.lead_id, nonBlockingBookingLeadIds, options)) return false;
       return normalizeOrderTime(row.schedule_time) === normalizedTime;
     });
 

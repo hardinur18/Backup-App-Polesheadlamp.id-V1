@@ -2856,6 +2856,7 @@ export const MasterDataProvider: React.FC<{
   const isNonBlockingScheduleBookingLead = (leadId?: string | null) => {
     if (!leadId) return false;
     const lead = leads.find((item) => item.id === leadId);
+    if (!lead) return true;
     return lead?.status === 'Cancel' || lead?.status === 'Closing';
   };
 

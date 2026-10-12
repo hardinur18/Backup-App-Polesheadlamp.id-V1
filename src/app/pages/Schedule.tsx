@@ -18,8 +18,8 @@ import { startPerfTimer } from '@/app/utils/perfTelemetry';
 import {
   buildActiveScheduleConflictMap,
   getScheduleConflictItemKey,
+  validateProspectBookingScheduleFromDB,
 } from '@/app/services/orderScheduleValidation';
-import { supabase } from '@/lib/supabaseClient';
 import {
   Select,
   SelectContent,
@@ -451,6 +451,9 @@ export default function Schedule() {
         .map((lead) => lead.id),
     );
   }, [leads]);
+  const leadStatusById = useMemo(() => {
+    return new Map(leads.map((lead) => [lead.id, lead.status]));
+  }, [leads]);
 
   const prospectBookings = useMemo(() => {
     const visibleBookings = rawProspectBookings.filter((booking) =>
@@ -685,6 +688,25 @@ export default function Schedule() {
     };
   }, [addProspectContext, currentDate, currentUser, isAdvertiserUser, isCsUser]);
 
+  const isLocallyBlockingScheduleItem = (item: ScheduleItem) => {
+    if (isInactiveScheduleItem(item)) {
+      return false;
+    }
+
+    if (item.source === 'booking' && item.leadId) {
+      const leadStatus = leadStatusById.get(item.leadId);
+      if (leadStatus === 'Cancel' || leadStatus === 'Closing') {
+        return false;
+      }
+
+      if (!leadStatus) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
   const getScheduleBookingConflictMessage = (booking: ProspectBooking) => {
     if (!booking.scheduleDate || !booking.scheduleTime || !booking.branchId || !booking.technicianId) {
       return 'Slot booking belum lengkap. Silakan pilih slot jadwal yang valid.';
@@ -716,7 +738,7 @@ export default function Schedule() {
     }
 
     const conflictingItem = scheduleItems.find((item) =>
-      !isInactiveScheduleItem(item) &&
+      isLocallyBlockingScheduleItem(item) &&
       item.serviceDate === booking.scheduleDate &&
       item.technicianId === booking.technicianId &&
       getOperationalSlotTime(item.serviceTime) === slotTime
@@ -744,59 +766,9 @@ export default function Schedule() {
       return 'Jam booking tidak sesuai slot operasional.';
     }
 
-    try {
-      const [{ data: offSchedules, error: offError }, { data: bookingRows, error: bookingError }, { data: orderRows, error: orderError }] = await Promise.all([
-        supabase
-          .from('technician_schedules')
-          .select('type, reason')
-          .eq('user_id', booking.technicianId)
-          .eq('date', booking.scheduleDate)
-          .limit(1),
-        supabase
-          .from('prospect_bookings')
-          .select('schedule_time, status, order_id, lead_id')
-          .eq('technician_id', booking.technicianId)
-          .eq('schedule_date', booking.scheduleDate),
-        supabase
-          .from('orders')
-          .select('service_time, status')
-          .eq('technician_id', booking.technicianId)
-          .eq('service_date', booking.scheduleDate),
-      ]);
-
-      if (offError) throw offError;
-      if (bookingError) throw bookingError;
-      if (orderError) throw orderError;
-
-      if (offSchedules && offSchedules.length > 0) {
-        const offSchedule = offSchedules[0];
-        const reasonLabel = offSchedule.reason ? ` (${offSchedule.reason})` : '';
-        const technician = userById.get(booking.technicianId);
-        return `${technician?.name || 'Teknisi ini'} sedang ${String(offSchedule.type).toLowerCase()}${reasonLabel} pada tanggal tersebut.`;
-      }
-
-      const bookingConflict = (bookingRows || []).some((row) =>
-        !row.order_id &&
-        !INACTIVE_SCHEDULE_STATUSES.has(row.status) &&
-        (!row.lead_id || !nonScheduleLeadIds.has(row.lead_id)) &&
-        getOperationalSlotTime(row.schedule_time) === slotTime
-      );
-      if (bookingConflict) {
-        return `Slot ${slotTime} sudah terisi booking lain. Silakan pilih slot lain.`;
-      }
-
-      const orderConflict = (orderRows || []).some((row) =>
-        !INACTIVE_SCHEDULE_STATUSES.has(row.status) && getOperationalSlotTime(row.service_time) === slotTime
-      );
-      if (orderConflict) {
-        return `Slot ${slotTime} sudah terpakai order aktif. Silakan pilih slot lain.`;
-      }
-
-      return null;
-    } catch (error) {
-      console.error('Error validating booking slot before submit:', error);
-      return 'Gagal memverifikasi slot terbaru. Coba simpan ulang beberapa detik lagi.';
-    }
+    return validateProspectBookingScheduleFromDB(booking, users, {
+      ignoredBookingLeadIds: nonScheduleLeadIds,
+    });
   };
 
   const handleSubmitBookingFromTimeline = async (booking: ProspectBooking) => {
