@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Search, Plus, Phone,
-  Edit, Trash2, MoreVertical, User as UserIcon, Check, CheckCircle2, ArrowRightCircle, LayoutList, KanbanSquare, Copy, ExternalLink, CalendarClock, Ban, MessageCircle, ChevronLeft, ChevronRight, Eye, RefreshCw, Bell, Tags
+  Edit, Trash2, MoreVertical, User as UserIcon, Check, CheckCircle2, ArrowRightCircle, LayoutList, KanbanSquare, Copy, ExternalLink, CalendarClock, Ban, MessageCircle, ChevronLeft, ChevronRight, Eye, RefreshCw, Bell, Tags, Save, Settings2, X
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -3049,26 +3049,28 @@ export const Prospek = ({ onNavigate }: { onNavigate?: (page: string) => void })
           if (!open) closeLeadLabelEditor();
         }}
       >
-        <MasterDataFormDialogContent size="default">
+        <MasterDataFormDialogContent size="default" className="leadLabelEditorDialog">
           <MasterDataFormHeader
             icon={Tags}
             title="Atur Label Prospek"
-            description={labelTargetLead ? `Pilih label resmi untuk ${labelTargetLead.name}.` : 'Pilih label resmi untuk prospek.'}
+            description={labelTargetLead ? `Pilih label untuk ${labelTargetLead.name}.` : 'Pilih label resmi untuk prospek.'}
           />
-          <MasterDataDialogBody compact className="space-y-4">
+          <MasterDataDialogBody compact className="leadLabelEditorBody">
             {activeProspectLabels.length === 0 ? (
               <OperationalEmptyState
                 icon={Tags}
                 title="Belum ada master label aktif"
                 description="Buat master label dulu agar prospek bisa ditandai dengan label yang konsisten."
-                className="py-8"
+                className="leadLabelEditorEmpty"
               />
             ) : (
               <>
-                <div className="rounded-2xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-sm font-semibold text-blue-800">
-                  {labelEditorIds.length} dari maksimal 6 label dipilih.
+                <div className="leadLabelEditorSummary">
+                  <span>{labelEditorIds.length}/6</span>
+                  <strong>label dipilih</strong>
+                  <small>Maksimal 6 label per prospek.</small>
                 </div>
-                <div className="grid gap-2">
+                <div className="leadLabelEditorList">
                   {activeProspectLabels.map((label) => {
                     const checked = labelEditorIds.includes(label.id);
                     return (
@@ -3076,11 +3078,7 @@ export const Prospek = ({ onNavigate }: { onNavigate?: (page: string) => void })
                         key={label.id}
                         role="button"
                         tabIndex={0}
-                        className={`flex items-center gap-3 rounded-2xl border px-4 py-3 text-left transition ${
-                          checked
-                            ? 'border-blue-200 bg-blue-50 shadow-sm'
-                            : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-slate-50'
-                        }`}
+                        className={`leadLabelChoice ${checked ? 'isSelected' : ''}`}
                         onClick={() => toggleLeadLabel(label.id)}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter' || event.key === ' ') {
@@ -3090,19 +3088,20 @@ export const Prospek = ({ onNavigate }: { onNavigate?: (page: string) => void })
                         }}
                       >
                         <Checkbox
+                          className="leadLabelChoiceCheck"
                           checked={checked}
                           onClick={(event) => event.stopPropagation()}
                           onCheckedChange={() => toggleLeadLabel(label.id)}
                         />
-                        <span className="h-3 w-3 rounded-full" style={{ backgroundColor: label.color }} />
-                        <span className="min-w-0 flex-1">
-                          <strong className="block truncate text-sm font-extrabold text-slate-900">#{label.name}</strong>
-                          <small className="block truncate text-xs font-semibold text-slate-500">
+                        <span className="leadLabelChoiceDot" style={{ backgroundColor: label.color }} />
+                        <span className="leadLabelChoiceText">
+                          <strong>#{label.name}</strong>
+                          <small>
                             {label.description || (label.followUpEnabled ? 'Masuk rencana follow up' : 'Label segmentasi prospek')}
                           </small>
                         </span>
                         {label.followUpEnabled && (
-                          <Badge variant="outline" className="border-blue-200 bg-blue-50 text-blue-700">
+                          <Badge variant="outline" className="leadLabelChoiceBadge">
                             Plan FU
                           </Badge>
                         )}
@@ -3113,22 +3112,26 @@ export const Prospek = ({ onNavigate }: { onNavigate?: (page: string) => void })
               </>
             )}
           </MasterDataDialogBody>
-          <DialogFooter className="masterDataFormActions">
-            <Button type="button" variant="outline" onClick={closeLeadLabelEditor}>
+          <DialogFooter className="masterDataFormActions leadLabelEditorActions">
+            <Button type="button" variant="outline" className="leadLabelEditorCancelButton" onClick={closeLeadLabelEditor}>
+              <X className="h-4 w-4" />
               Batal
             </Button>
             {activeProspectLabels.length === 0 ? (
               <Button
                 type="button"
+                className="leadLabelEditorSaveButton"
                 onClick={() => {
                   closeLeadLabelEditor();
                   setIsLabelManagerOpen(true);
                 }}
               >
+                <Settings2 className="h-4 w-4" />
                 Kelola Label
               </Button>
             ) : (
-              <Button type="button" onClick={() => void handleSaveLeadLabels()}>
+              <Button type="button" className="leadLabelEditorSaveButton" onClick={() => void handleSaveLeadLabels()}>
+                <Save className="h-4 w-4" />
                 Simpan Label
               </Button>
             )}

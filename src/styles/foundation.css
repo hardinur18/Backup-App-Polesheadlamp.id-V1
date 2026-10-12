@@ -634,6 +634,246 @@
   gap: 8px;
 }
 
+.leadLabelEditorDialog.masterDataFormDialogContent {
+  border-radius: 24px;
+  max-width: min(calc(100vw - 32px), 520px);
+  width: min(calc(100vw - 32px), 520px);
+}
+
+.leadLabelEditorDialog.masterDataFormDialogContent > button {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  display: inline-flex;
+  height: 38px;
+  justify-content: center;
+  opacity: 1;
+  right: 24px;
+  top: 24px;
+  width: 38px;
+}
+
+.leadLabelEditorDialog.masterDataFormDialogContent > button:hover {
+  background: #fff;
+  border-color: #cbd5e1;
+}
+
+.leadLabelEditorDialog .masterDataFormHeader {
+  padding: 30px 34px 24px;
+}
+
+.leadLabelEditorDialog .masterDataFormTitle {
+  font-size: 1.35rem;
+  gap: 12px;
+  line-height: 1.2;
+}
+
+.leadLabelEditorDialog .masterDataFormDescription {
+  font-size: 0.98rem;
+  line-height: 1.45;
+  margin-top: 10px;
+  max-width: 100%;
+}
+
+.leadLabelEditorBody.masterDataDialogBody {
+  gap: 14px;
+  padding: 18px 28px 20px;
+}
+
+.leadLabelEditorSummary {
+  align-items: center;
+  background: linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%);
+  border: 1px solid #dbeafe;
+  border-radius: 16px;
+  color: #1d4ed8;
+  display: flex;
+  gap: 8px;
+  min-height: 48px;
+  padding: 10px 14px;
+}
+
+.leadLabelEditorSummary span {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-weight: 900;
+  height: 28px;
+  justify-content: center;
+  min-width: 44px;
+  padding-inline: 10px;
+}
+
+.leadLabelEditorSummary strong {
+  color: #0f172a;
+  font-size: 0.9rem;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.leadLabelEditorSummary small {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.2;
+  margin-left: auto;
+  text-align: right;
+}
+
+.leadLabelEditorList {
+  display: grid;
+  gap: 10px;
+}
+
+.leadLabelChoice {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  cursor: pointer;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  min-height: 70px;
+  padding: 12px 14px;
+  text-align: left;
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.leadLabelChoice:hover {
+  background: #f8fbff;
+  border-color: #bfdbfe;
+  transform: translateY(-1px);
+}
+
+.leadLabelChoice:focus-visible {
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.16);
+  outline: none;
+}
+
+.leadLabelChoice.isSelected {
+  background: #f8fbff;
+  border-color: #2563eb;
+  box-shadow: 0 10px 28px rgba(37, 99, 235, 0.12);
+}
+
+.leadLabelChoiceCheck {
+  border-radius: 9px;
+  height: 24px;
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  width: 24px;
+}
+
+.leadLabelChoice.isSelected .leadLabelChoiceCheck {
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.22);
+}
+
+.leadLabelChoiceDot {
+  border-radius: 999px;
+  box-shadow: 0 0 0 4px rgba(226, 232, 240, 0.72);
+  height: 11px;
+  width: 11px;
+}
+
+.leadLabelChoiceText {
+  display: block;
+  min-width: 0;
+}
+
+.leadLabelChoiceText strong {
+  color: #0f172a;
+  display: block;
+  font-size: 0.96rem;
+  font-weight: 880;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leadLabelChoiceText small {
+  color: #64748b;
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 650;
+  line-height: 1.25;
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leadLabelChoiceBadge {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  border-radius: 999px;
+  color: #1d4ed8;
+  flex: 0 0 auto;
+  font-weight: 800;
+  padding-inline: 10px;
+}
+
+.leadLabelEditorEmpty.operationalEmptyState {
+  min-height: 220px;
+  padding-block: 32px !important;
+}
+
+.leadLabelEditorActions.masterDataFormActions {
+  background: #fff;
+  border-top: 1px solid #e8eef6;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 18px 28px 22px;
+}
+
+.leadLabelEditorActions .uiButton,
+.leadLabelEditorActions button {
+  align-items: center;
+  border-radius: 16px;
+  display: inline-flex;
+  font-weight: 850;
+  gap: 8px;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 144px;
+  padding-inline: 18px;
+}
+
+.leadLabelEditorCancelButton.uiButton,
+.leadLabelEditorCancelButton {
+  background: #fff;
+  border-color: #dbe5f0;
+  color: #334155;
+}
+
+.leadLabelEditorCancelButton.uiButton:hover,
+.leadLabelEditorCancelButton:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+.leadLabelEditorSaveButton.uiButton,
+.leadLabelEditorSaveButton {
+  background: linear-gradient(135deg, #0ea5e9 0%, #0b63ce 78%);
+  border: 0;
+  box-shadow: 0 14px 30px rgba(14, 99, 206, 0.24);
+  color: #fff;
+}
+
+.leadLabelEditorSaveButton.uiButton:hover,
+.leadLabelEditorSaveButton:hover {
+  background: linear-gradient(135deg, #0284c7 0%, #0759bf 78%);
+  box-shadow: 0 16px 34px rgba(14, 99, 206, 0.3);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
 @media (max-width: 1100px) {
   .prospectLabelFormGrid {
     grid-template-columns: minmax(0, 1fr) minmax(180px, 0.75fr);
@@ -672,6 +912,47 @@
 
   .prospectLabelListActions {
     justify-content: flex-start;
+  }
+
+  .leadLabelEditorDialog .masterDataFormHeader {
+    padding: 24px 22px 20px;
+  }
+
+  .leadLabelEditorBody.masterDataDialogBody {
+    padding-inline: 18px;
+  }
+
+  .leadLabelEditorSummary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .leadLabelEditorSummary small {
+    margin-left: 0;
+    text-align: left;
+  }
+
+  .leadLabelChoice {
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
+
+  .leadLabelChoiceBadge {
+    grid-column: 3;
+    justify-self: start;
+  }
+
+  .leadLabelEditorActions.masterDataFormActions {
+    padding: 16px 18px 18px;
+  }
+
+  .leadLabelEditorActions .uiButton,
+  .leadLabelEditorActions button {
+    min-width: 0;
+  }
+
+  .leadLabelEditorActions.masterDataFormActions {
+    display: grid;
+    grid-template-columns: 1fr 1.15fr;
   }
 }
 
