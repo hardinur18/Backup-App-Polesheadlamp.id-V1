@@ -23709,6 +23709,54 @@ body {
   box-shadow: 0 18px 44px -34px rgba(15, 23, 42, 0.36);
 }
 
+.orderPage .orderMobileSortBar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(156px, 176px);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  box-shadow: 0 16px 34px -30px rgba(15, 23, 42, 0.38);
+  padding: 10px;
+}
+
+.orderPage .orderMobileSortSummary {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.orderPage .orderMobileSortSummary span {
+  color: #94a3b8;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.orderPage .orderMobileSortSummary strong {
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 0.84rem;
+  font-weight: 820;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orderPage .orderMobileSortTrigger.uiSelectTrigger {
+  width: 100%;
+  min-height: 42px;
+  border-color: rgba(203, 213, 225, 0.92);
+  border-radius: 14px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 0.8rem;
+  font-weight: 760;
+}
+
 .orderPage .orderMobileCard {
   outline: none;
   transition:
@@ -23729,6 +23777,35 @@ body {
 
 .orderPage .orderMobileCard.isInteractive:active {
   transform: translateY(1px);
+}
+
+.orderPage .orderMobileServicePrice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  border-radius: 14px;
+  background: #f8fafc;
+  padding: 8px 10px;
+}
+
+.orderPage .orderMobileServiceName {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 0.74rem;
+  font-weight: 680;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orderPage .orderMobileServicePrice strong {
+  color: #0f172a;
+  font-size: 0.82rem;
+  font-weight: 840;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .orderFormSheet.masterDataManagedForm {
@@ -25979,6 +26056,18 @@ body {
     box-shadow: none !important;
   }
 
+  .orderPage .orderMobileSortBar {
+    grid-template-columns: minmax(0, 1fr) minmax(146px, 42%);
+    border-color: rgba(203, 213, 225, 0.86);
+    border-radius: 20px;
+    padding: 10px;
+  }
+
+  .orderPage .orderMobileSortTrigger.uiSelectTrigger {
+    min-height: 40px;
+    font-size: 0.76rem;
+  }
+
   .orderPage .orderMobileCard {
     position: relative;
     display: grid;
@@ -26056,6 +26145,10 @@ body {
     white-space: nowrap;
   }
 
+  .orderPage .orderMobileServicePrice {
+    margin-top: 8px;
+  }
+
   .orderMobileInfoList {
     display: grid;
     gap: 6px !important;
@@ -26121,6 +26214,16 @@ body {
     min-width: 38px !important;
     height: 38px !important;
     min-height: 38px !important;
+  }
+
+  .orderPage .orderMobileSortBar {
+    grid-template-columns: 1fr;
+  }
+
+  .orderPage .orderMobileSortSummary {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: baseline;
+    gap: 8px;
   }
 
   .orderKpiGrid.metricGrid > .metricCard {

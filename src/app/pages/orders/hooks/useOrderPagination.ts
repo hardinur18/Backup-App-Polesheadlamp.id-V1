@@ -1,6 +1,9 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Order } from '../../master-data/data';
 
+type OrderSortConfig = { key: 'price', direction: 'asc' | 'desc' };
+export type OrderPriceSortDirection = OrderSortConfig['direction'] | null;
+
 const normalizePrice = (value: Order['price']) => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   const parsed = Number(String(value ?? '').replace(/[^\d.-]/g, ''));
@@ -23,7 +26,7 @@ export function useOrderPagination({
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(50);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
+  const [sortConfig, setSortConfig] = useState<OrderSortConfig | null>(null);
 
   // Reset page when filters change
   useEffect(() => {
@@ -34,25 +37,31 @@ export function useOrderPagination({
   const requestSort = useCallback((key: string) => {
     setCurrentPage(1);
     setSortConfig(prev => {
-      const firstDirection: 'asc' | 'desc' = key === 'price' ? 'desc' : 'asc';
+      if (key !== 'price') {
+        return prev;
+      }
+
+      const firstDirection: OrderSortConfig['direction'] = 'desc';
       if (!prev || prev.key !== key) {
         return { key, direction: firstDirection };
       }
 
-      if (key === 'price') {
-        return { key, direction: prev.direction === 'desc' ? 'asc' : 'desc' };
-      }
-
-      return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+      return { key, direction: prev.direction === 'desc' ? 'asc' : 'desc' };
     });
   }, []);
 
+  const setPriceSortDirection = useCallback((direction: OrderPriceSortDirection) => {
+    setCurrentPage(1);
+    setSortConfig(direction ? { key: 'price', direction } : null);
+  }, []);
+
   // Sorting
-  const priceSortedOrders = useMemo(() => {
+  const sortedOrders = useMemo(() => {
     if (sortConfig?.key !== 'price') {
-      return null;
+      return filteredOrders;
     }
 
+    const directionMultiplier = sortConfig.direction === 'asc' ? 1 : -1;
     return filteredOrders
       .map((order, index) => ({
         order,
@@ -60,21 +69,11 @@ export function useOrderPagination({
         price: normalizePrice(order.price),
       }))
       .sort((a, b) => {
-        const priceDelta = b.price - a.price;
-        return priceDelta || a.index - b.index;
+        const priceDelta = a.price - b.price;
+        return (priceDelta * directionMultiplier) || a.index - b.index;
       })
       .map(({ order }) => order);
-  }, [filteredOrders, sortConfig?.key]);
-
-  const sortedOrders = useMemo(() => {
-    if (sortConfig?.key !== 'price' || !priceSortedOrders) {
-      return filteredOrders;
-    }
-
-    return sortConfig.direction === 'asc'
-      ? [...priceSortedOrders].reverse()
-      : priceSortedOrders;
-  }, [filteredOrders, priceSortedOrders, sortConfig]);
+  }, [filteredOrders, sortConfig]);
 
   // Pagination
   const totalPages = Math.ceil(filteredOrders.length / itemsPerPage);
@@ -106,6 +105,7 @@ export function useOrderPagination({
     selectedIds, setSelectedIds,
     sortConfig,
     requestSort,
+    setPriceSortDirection,
     sortedOrders,
     totalPages,
     paginatedOrders,

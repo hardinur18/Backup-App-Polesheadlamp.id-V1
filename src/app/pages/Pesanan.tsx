@@ -337,7 +337,7 @@ export function Pesanan({ onNavigate }: { onNavigate?: (id: string) => void }) {
   });
   const {
     currentPage, setCurrentPage, itemsPerPage, setItemsPerPage,
-    selectedIds, setSelectedIds, sortConfig, requestSort,
+    selectedIds, setSelectedIds, sortConfig, requestSort, setPriceSortDirection,
     sortedOrders, totalPages, paginatedOrders, handleSelectAll, handleSelectRow,
   } = pagination;
 
@@ -722,6 +722,27 @@ export function Pesanan({ onNavigate }: { onNavigate?: (id: string) => void }) {
   });
   const suppressOrderStatusClickRef = React.useRef(false);
   const photoViewerOpenGuardRef = React.useRef<{ orderId: string; at: number } | null>(null);
+  const orderSortSelectValue = sortConfig?.key === 'price'
+    ? `price-${sortConfig.direction}`
+    : 'default';
+  const clearOrderTableInteractionGuards = useCallback(() => {
+    suppressOrderTableClickRef.current = false;
+    suppressNextOrderRowClickRef.current = false;
+    orderTableDragRef.current.dragging = false;
+  }, []);
+  const handleOrderSortSelectChange = useCallback((value: string) => {
+    if (value === 'price-desc') {
+      setPriceSortDirection('desc');
+      return;
+    }
+
+    if (value === 'price-asc') {
+      setPriceSortDirection('asc');
+      return;
+    }
+
+    setPriceSortDirection(null);
+  }, [setPriceSortDirection]);
   const deleteOrderTarget = useMemo(
     () => (deleteId ? orders.find((order) => order.id === deleteId) || null : null),
     [deleteId, orders],
@@ -2424,8 +2445,22 @@ export function Pesanan({ onNavigate }: { onNavigate?: (id: string) => void }) {
                       <span>Layanan & Harga</span>
                       <button
                         type="button"
+                        data-drag-scroll-ignore="true"
                         className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-orange-50 hover:text-orange-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 dark:hover:bg-orange-950/30 dark:hover:text-orange-400 dark:focus-visible:ring-offset-slate-950"
-                        onClick={() => requestSort('price')}
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          clearOrderTableInteractionGuards();
+                        }}
+                        onMouseDown={(event) => {
+                          event.stopPropagation();
+                          clearOrderTableInteractionGuards();
+                        }}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          clearOrderTableInteractionGuards();
+                          requestSort('price');
+                        }}
                         title={
                           sortConfig?.key === 'price'
                             ? `Harga ${sortConfig.direction === 'asc' ? 'terendah ke tertinggi' : 'tertinggi ke terendah'}`
@@ -3334,6 +3369,28 @@ export function Pesanan({ onNavigate }: { onNavigate?: (id: string) => void }) {
 
           {/* MOBILE CARD LIST (Visible on sm/xs) */}
           <div className="orderMobileSurface md:hidden p-4 space-y-3">
+              <div className="orderMobileSortBar">
+                <div className="orderMobileSortSummary">
+                  <span>Urutan</span>
+                  <strong>
+                    {sortConfig?.key === 'price'
+                      ? sortConfig.direction === 'desc'
+                        ? 'Harga tertinggi'
+                        : 'Harga terendah'
+                      : 'Default'}
+                  </strong>
+                </div>
+                <Select value={orderSortSelectValue} onValueChange={handleOrderSortSelectChange}>
+                  <SelectTrigger className="orderMobileSortTrigger">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="z-[220]">
+                    <SelectItem value="default">Default</SelectItem>
+                    <SelectItem value="price-desc">Harga tertinggi</SelectItem>
+                    <SelectItem value="price-asc">Harga terendah</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               {ordersTableLoading ? (
                  <OrderMobileSkeleton />
               ) : paginatedOrders.length === 0 ? (
@@ -3391,6 +3448,10 @@ export function Pesanan({ onNavigate }: { onNavigate?: (id: string) => void }) {
                         {/* Content Row: Name, Platform | Sub Channel */}
                         <div className="orderMobileCardBody space-y-1">
                             <h3 className="orderMobileCustomerName font-bold text-slate-900 dark:text-slate-100 text-sm leading-tight">{order.customerName}</h3>
+                            <div className="orderMobileServicePrice">
+                              <span className="orderMobileServiceName">{getServiceName(order.serviceId)}</span>
+                              <strong>Rp {order.price.toLocaleString('id-ID')}</strong>
+                            </div>
                             
                             {/* Advertiser View: Simple Platform Info */}
                             {useCompactAdvertiserCard ? (
