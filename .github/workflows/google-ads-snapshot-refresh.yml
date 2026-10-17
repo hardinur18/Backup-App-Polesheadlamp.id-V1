@@ -47,6 +47,7 @@ jobs:
             echo "- Status: $(jq -r '.status // .message // "unknown"' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
             echo "- Inserted: $(jq -r '.counts.inserted // 0' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
             echo "- Updated: $(jq -r '.counts.updated // 0' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
+            jq '{status, triggerSource, range, counts, providers: [.providerStatuses[]? | {key, state, count}], errors}' ads-sync-result.json
           fi
 
   reconcile_recent:
@@ -89,4 +90,5 @@ jobs:
             echo "- Status: $(jq -r '.status // .message // "unknown"' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
             echo "- Inserted: $(jq -r '.counts.inserted // 0' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
             echo "- Updated: $(jq -r '.counts.updated // 0' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
+            jq '{status, triggerSource, range, counts, providers: [.providerStatuses[]? | {key, state, count}], errors}' ads-sync-result.json
           fi

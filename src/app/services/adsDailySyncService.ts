@@ -93,11 +93,6 @@ export type AdsDailySyncPreviewResult = {
   unmappedCount: number;
 };
 
-export type AdsDailySyncCommitResult = {
-  inserted: number;
-  updated: number;
-};
-
 export type AdsDailySyncRunKind = 'preview' | 'commit';
 
 export type AdsDailySyncHistoryItem = {
@@ -1508,123 +1503,6 @@ export async function buildAdsDailySyncPreview({
     skippedCount: sortedRows.filter((row) => row.status === 'skip').length,
     unmappedCount: sortedRows.filter((row) => row.status === 'unmapped').length,
   };
-}
-
-const mapPreviewRowToDailyAdPayload = (row: AdsDailySyncPreviewRow) => ({
-  id: row.existing?.id || crypto.randomUUID(),
-  date: row.date,
-  advertiser_id: row.advertiserId,
-  platform_id: row.platformId,
-  sub_channel_id: row.subChannelId || null,
-  ad_account_id: row.adAccountId,
-  cs_id: row.csId || null,
-  amount_spent: row.amountSpent,
-  leads_dashboard: row.leadsDashboard,
-  ppn_amount: row.ppnAmount,
-  fee_amount: row.feeAmount,
-  edit_count: row.existing?.editCount || 0,
-});
-
-const withoutEditCount = (payload: ReturnType<typeof mapPreviewRowToDailyAdPayload>) => {
-  const { edit_count: _editCount, ...safePayload } = payload;
-  return safePayload;
-};
-
-const getDatabaseErrorMessage = (error: unknown) => {
-  if (error instanceof Error) return error.message;
-  if (error && typeof error === 'object') {
-    const parts = ['message', 'details', 'hint', 'code']
-      .map((key) => (error as Record<string, unknown>)[key])
-      .filter(Boolean)
-      .map(String);
-    if (parts.length > 0) return parts.join(' ');
-  }
-  return String(error || '');
-};
-
-const isMissingEditCountError = (error: unknown) => {
-  const message = getDatabaseErrorMessage(error);
-  return /edit_count/i.test(message) && /schema cache|column|could not find|does not exist/i.test(message);
-};
-
-async function findExistingDailyAdByBusinessKey(row: Pick<AdsDailySyncPreviewRow, 'date' | 'adAccountId'>) {
-  const { data, error } = await supabase
-    .from('daily_ads')
-    .select('*')
-    .eq('date', row.date)
-    .eq('ad_account_id', row.adAccountId)
-    .order('created_at', { ascending: false })
-    .limit(1);
-
-  if (error) throw new Error(error.message);
-  const [existing] = data || [];
-  return existing ? mapDailyAdFromDbRow(existing) : undefined;
-}
-
-async function updateDailyAdFromPreview(row: AdsDailySyncPreviewRow, existing: DailyAd) {
-  const payload = mapPreviewRowToDailyAdPayload({ ...row, existing });
-  const { error } = await supabase
-    .from('daily_ads')
-    .update(payload)
-    .eq('id', existing.id);
-
-  if (!error) return;
-  if (!isMissingEditCountError(error)) throw new Error(error.message);
-
-  const fallback = await supabase
-    .from('daily_ads')
-    .update(withoutEditCount(payload))
-    .eq('id', existing.id);
-
-  if (fallback.error) throw new Error(fallback.error.message);
-}
-
-async function insertDailyAdFromPreview(row: AdsDailySyncPreviewRow) {
-  const payload = mapPreviewRowToDailyAdPayload(row);
-  const { error } = await supabase
-    .from('daily_ads')
-    .insert(payload);
-
-  if (!error) return;
-  if (!isMissingEditCountError(error)) throw new Error(error.message);
-
-  const fallback = await supabase
-    .from('daily_ads')
-    .insert(withoutEditCount(payload));
-
-  if (fallback.error) throw new Error(fallback.error.message);
-}
-
-export async function commitAdsDailySyncPreview(rows: AdsDailySyncPreviewRow[]): Promise<AdsDailySyncCommitResult> {
-  const actionableRows = rows.filter((row) => row.status === 'new' || row.status === 'update');
-  let inserted = 0;
-  let updated = 0;
-
-  for (const row of actionableRows) {
-    const currentExisting = row.existing || await findExistingDailyAdByBusinessKey(row);
-
-    if (currentExisting && (currentExisting.editCount || 0) > 0) {
-      continue;
-    }
-
-    if (currentExisting) {
-      await updateDailyAdFromPreview(row, currentExisting);
-      updated += 1;
-    } else {
-      try {
-        await insertDailyAdFromPreview(row);
-        inserted += 1;
-      } catch (error) {
-        const freshExisting = await findExistingDailyAdByBusinessKey(row);
-        if (!freshExisting) throw error;
-        if ((freshExisting.editCount || 0) > 0) continue;
-        await updateDailyAdFromPreview(row, freshExisting);
-        updated += 1;
-      }
-    }
-  }
-
-  return { inserted, updated };
 }
 
 export async function syncAdsApiToDailyAds({
