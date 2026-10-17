@@ -71,6 +71,10 @@ import {
 import {
   getAdsProviderKeyByPlatformName,
   reconcileAdsDailySyncPreviewRows,
+  fetchAdsDailySyncUpdateHistory,
+  formatAdsSyncHistoryTime,
+  getAdsSyncHistoryOutcome,
+  hasAdsSyncDataChanges,
 } from './src/app/services/adsDailySyncService.ts';
 
 const tests = [];
@@ -306,6 +310,62 @@ test('ads provider and daily sync reconcile preserve manual edits and filter sco
   );
   assert.equal(filtered.status, 'skip');
   assert.match(filtered.reason, /advertiser/i);
+});
+
+test('ads history distinguishes saved changes from preview, no-op, and partial sync', () => {
+  const saved = {
+    kind: 'commit', counts: { inserted: 1, updated: 0 }, errors: [],
+    providerStatuses: [{ key: 'meta', state: 'success' }],
+  };
+  assert.equal(hasAdsSyncDataChanges(saved), true);
+  assert.equal(hasAdsSyncDataChanges({ ...saved, kind: 'preview' }), false);
+  const noChange = { ...saved, counts: { inserted: 0, updated: 0 } };
+  assert.equal(hasAdsSyncDataChanges(noChange), false);
+  assert.equal(getAdsSyncHistoryOutcome(noChange), 'Tanpa perubahan');
+  assert.equal(getAdsSyncHistoryOutcome({ ...saved, errors: ['Google timeout'] }), 'Tersimpan sebagian');
+  assert.equal(getAdsSyncHistoryOutcome({ ...noChange, errors: ['Meta timeout'] }), 'Sinkron bermasalah');
+});
+
+test('ads history timestamps always use Jakarta time and handle invalid values', () => {
+  const displayed = formatAdsSyncHistoryTime('2026-10-17T20:05:00Z');
+  assert.match(displayed, /18 Okt 2026/);
+  assert.match(displayed, /03[.:]05 WIB/);
+  assert.equal(formatAdsSyncHistoryTime('invalid'), '-');
+});
+
+test('ads history uses the latest completed sync even when no rows changed', async () => {
+  const originalFetch = globalThis.fetch;
+  const saved = {
+    id: 'saved', created_at: '2026-10-16T03:00:00Z', finished_at: '2026-10-16T03:01:00Z',
+    run_kind: 'commit', status: 'succeeded', inserted_count: 0, updated_count: 0,
+    range_from: '2026-10-01', range_to: '2026-10-16',
+  };
+  const previews = Array.from({ length: 5 }, (_, i) => ({
+    ...saved, id: 'preview-' + i, run_kind: 'preview', created_at: '2026-10-17T03:00:00Z',
+    inserted_count: 0, updated_count: 0,
+  }));
+  globalThis.fetch = async (input) => {
+    const url = new URL(typeof input === 'string' ? input : input.url || input);
+    assert.equal(url.pathname, '/rest/v1/daily_ads_sync_runs');
+    const isLastUpdate = url.searchParams.get('run_kind') === 'eq.commit';
+    if (isLastUpdate) {
+      assert.equal(url.searchParams.get('status'), 'in.(succeeded,partial)');
+      assert.equal(url.searchParams.get('order'), 'finished_at.desc');
+      assert.equal(url.searchParams.get('limit'), '1');
+    }
+    return new Response(JSON.stringify(isLastUpdate ? [saved] : previews), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  try {
+    const history = await fetchAdsDailySyncUpdateHistory();
+    assert.equal(history.source, 'database');
+    assert.equal(history.recent.length, 5);
+    assert.equal(history.lastUpdate.id, 'saved');
+    assert.equal(history.lastUpdate.createdAt, saved.finished_at);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 export async function runCoreContracts() {

@@ -67,8 +67,10 @@ import {
   type TikTokAdsIntegrationConfig,
 } from '@/app/services/tiktokAdsLiveService';
 import { PlatformLogo } from '@/app/components/ui/PlatformLogo';
+import { AdsSyncHistory } from '@/app/components/AdsSyncHistory';
 import { readDashboardSnapshotCache, writeDashboardSnapshotCache } from '@/app/services/dashboardSnapshotCache';
 import {
+  ADS_DAILY_SYNC_HISTORY_UPDATED_EVENT,
   syncAdsApiToDailyAds,
 } from '@/app/services/adsDailySyncService';
 import {
@@ -394,6 +396,7 @@ export function CSDashboard({ userId }: { userId?: string }) {
   
   // Internal selection state for Owner viewing this dashboard
   const isOwner = hasPermission('dashboard.view_owner');
+  const canSyncAds = hasPermission('ads.manage');
   const canManageSpamInputs = hasPermission('leads.edit') || isOwner || isCsRole(currentUser?.role);
   const [selectedCsId, setSelectedCsId] = useState<string>(() => (
     userId || readCsViewFilterState().selectedCsId || 'all'
@@ -433,7 +436,7 @@ export function CSDashboard({ userId }: { userId?: string }) {
   const [tiktokIntegrationConfigs, setTikTokIntegrationConfigs] = useState<TikTokAdsIntegrationConfig[]>([]);
   const [apiAccountMappings, setApiAccountMappings] = useState<AdAccountApiMapping[]>([]);
   const [apiRefreshNonce] = useState(0);
-  const [apiSnapshotRefreshNonce] = useState(0);
+  const [apiSnapshotRefreshNonce, setApiSnapshotRefreshNonce] = useState(1);
   const [isApiDailySyncing, setIsApiDailySyncing] = useState(false);
   const [isPerformanceRangeLoading, setIsPerformanceRangeLoading] = useState(false);
   const [expandedCprBreakdowns, setExpandedCprBreakdowns] = useState<string[]>([]);
@@ -471,7 +474,14 @@ export function CSDashboard({ userId }: { userId?: string }) {
   React.useEffect(() => {
     if (refreshTrigger === lastMasterRefreshTriggerRef.current) return;
     lastMasterRefreshTriggerRef.current = refreshTrigger;
+    setApiSnapshotRefreshNonce((value) => value + 1);
   }, [refreshTrigger]);
+
+  React.useEffect(() => {
+    const refreshStoredSnapshots = () => setApiSnapshotRefreshNonce((value) => value + 1);
+    window.addEventListener(ADS_DAILY_SYNC_HISTORY_UPDATED_EVENT, refreshStoredSnapshots);
+    return () => window.removeEventListener(ADS_DAILY_SYNC_HISTORY_UPDATED_EVENT, refreshStoredSnapshots);
+  }, []);
   const handleDateRangeChange = React.useCallback((range: DateRange | undefined) => {
     setDateRange(sanitizeCsViewDateRange(range));
   }, []);
@@ -507,6 +517,7 @@ export function CSDashboard({ userId }: { userId?: string }) {
     try {
       const syncResult = await syncAdsApiToDailyAds({
         range: rangeParams,
+        actor: currentUser || undefined,
         context: {
           dailyAds,
           platforms,
@@ -523,6 +534,11 @@ export function CSDashboard({ userId }: { userId?: string }) {
           mappedOnly: true,
         },
       });
+      if (syncResult.busy) {
+        toast.info(syncResult.message || 'Sinkron iklan lain sedang berjalan.');
+        setApiAdsStatus('ready');
+        return;
+      }
       const unmappedRows = syncResult.rows.filter((row) =>
         row.status === 'unmapped' && ((Number(row.amountSpent) || 0) > 0 || (Number(row.leadsDashboard) || 0) > 0),
       );
@@ -572,6 +588,7 @@ export function CSDashboard({ userId }: { userId?: string }) {
     adAccountAssignments,
     adAccountOwnerAssignments,
     adAccounts,
+    currentUser,
     dailyAds,
     platforms,
     rangeParams,
@@ -2427,18 +2444,22 @@ export function CSDashboard({ userId }: { userId?: string }) {
                 Input Spam
               </Button>
             )}
-            <Button
-              type="button"
-              className="csDashboardActionButton gap-2 bg-blue-600 text-white shadow-sm hover:bg-blue-700"
-              disabled={!rangeParams || isApiSyncBusy}
-              onClick={handleSyncAdsApiToDailyAds}
-            >
-              <RefreshCw className={`h-4 w-4 ${isApiSyncBusy ? 'animate-spin' : ''}`} />
-              Sinkron API
-            </Button>
+            {canSyncAds && (
+              <Button
+                type="button"
+                className="csDashboardActionButton gap-2 bg-blue-600 text-white shadow-sm hover:bg-blue-700"
+                disabled={!rangeParams || isApiSyncBusy}
+                onClick={handleSyncAdsApiToDailyAds}
+              >
+                <RefreshCw className={`h-4 w-4 ${isApiSyncBusy ? 'animate-spin' : ''}`} />
+                Sinkron sekarang
+              </Button>
+            )}
           </div>
         </div>
       </OperationalFilterPanel>
+
+      <AdsSyncHistory isSyncing={isApiDailySyncing} />
 
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as CsViewTab)} className="csDashboardTabs space-y-4">
         <TabsViewport className="csDashboardTabsViewport">
@@ -2745,17 +2766,19 @@ export function CSDashboard({ userId }: { userId?: string }) {
                   {(isApiLoading || isApiDailySyncing) && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
                   {resolvedApiStatusLabel}
                 </span>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 gap-2 bg-white dark:bg-slate-900"
-                  disabled={!rangeParams || isApiSyncBusy}
-                  onClick={handleSyncAdsApiToDailyAds}
-                >
-                  <RefreshCw className={`h-4 w-4 ${isApiSyncBusy ? 'animate-spin' : ''}`} />
-                  Sinkron API
-                </Button>
+                {canSyncAds && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-2 bg-white dark:bg-slate-900"
+                    disabled={!rangeParams || isApiSyncBusy}
+                    onClick={handleSyncAdsApiToDailyAds}
+                  >
+                    <RefreshCw className={`h-4 w-4 ${isApiSyncBusy ? 'animate-spin' : ''}`} />
+                    Sinkron sekarang
+                  </Button>
+                )}
               </div>
             </div>
           </CardHeader>

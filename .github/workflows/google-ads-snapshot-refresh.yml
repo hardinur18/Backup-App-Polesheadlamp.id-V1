@@ -1,50 +1,92 @@
-name: Google Ads Snapshot Refresh
+name: Ads Daily Automatic Sync
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/15 * * * *'
+    - cron: '17 19 * * *'
   workflow_dispatch:
 
 jobs:
-  refresh_google_ads_snapshots:
-    name: Refresh Google Ads Snapshots
+  sync_incremental:
+    name: Sync Today and Yesterday
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/15 * * * *'
     runs-on: ubuntu-latest
     concurrency:
-      group: google-ads-snapshot-refresh
+      group: ads-daily-sync
       cancel-in-progress: false
-
     permissions:
       contents: read
-
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-      VITE_FUNCTIONS_BASE_URL: https://dhnxwrteolnjdrxlmgwi.supabase.co/functions/v1/make-server-f781cd00
-      GOOGLE_ADS_SNAPSHOT_AUTH_SOFT_FAIL: 'true'
-
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
+      - name: Validate scheduler secrets
+        run: |
+          test -n "$SUPABASE_URL"
+          test -n "$SUPABASE_ANON_KEY"
+          test -n "$SUPABASE_SERVICE_ROLE_KEY"
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Refresh Google Ads snapshots
-        run: npm run ads:google-snapshot-refresh
+      - name: Run incremental ads sync
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --retry 2 --retry-all-errors --max-time 300 \
+            -X POST "$SUPABASE_URL/functions/v1/make-server-f781cd00/ads/sync-run" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -H "x-service-role-key: $SUPABASE_SERVICE_ROLE_KEY" \
+            --data '{"triggerSource":"scheduled","forceProviders":false}' \
+            --output ads-sync-result.json
 
       - name: Publish summary
         if: always()
         run: |
-          echo "### Google Ads snapshot refresh" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Scheduler: GitHub Actions" >> "$GITHUB_STEP_SUMMARY"
-          echo "- History window: 90 hari sampai kemarin" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Today window: hari ini dengan min fresh 10 menit" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Target function: \`/google/sync-snapshots\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Google OAuth reconnect dibaca sebagai warning agar scheduler tidak spam failed run" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Ads daily automatic sync" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Window: today and yesterday" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f ads-sync-result.json ]; then
+            echo "- Status: $(jq -r '.status // .message // "unknown"' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Inserted: $(jq -r '.counts.inserted // 0' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Updated: $(jq -r '.counts.updated // 0' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  reconcile_recent:
+    name: Reconcile Last Seven Days
+    if: github.event_name == 'schedule' && github.event.schedule == '17 19 * * *'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ads-daily-sync
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - name: Validate scheduler secrets
+        run: |
+          test -n "$SUPABASE_URL"
+          test -n "$SUPABASE_ANON_KEY"
+          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+
+      - name: Reconcile recent ads data
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --retry 2 --retry-all-errors --max-time 300 \
+            -X POST "$SUPABASE_URL/functions/v1/make-server-f781cd00/ads/sync-run" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -H "x-service-role-key: $SUPABASE_SERVICE_ROLE_KEY" \
+            --data '{"triggerSource":"reconcile","forceProviders":true}' \
+            --output ads-sync-result.json
+
+      - name: Publish summary
+        if: always()
+        run: |
+          echo "### Ads daily reconciliation" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Window: last seven days" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f ads-sync-result.json ]; then
+            echo "- Status: $(jq -r '.status // .message // "unknown"' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Inserted: $(jq -r '.counts.inserted // 0' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Updated: $(jq -r '.counts.updated // 0' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -24,10 +24,12 @@ import { isAdvertiserRole } from '@/app/data/roleHelpers';
 import { Button } from '@/app/components/ui/button';
 import { Tabs, TabsContent, TabsRail, TabsTrigger, TabsViewport } from '@/app/components/ui/tabs';
 import { PlatformLogo } from '@/app/components/ui/PlatformLogo';
+import { AdsSyncHistory } from '@/app/components/AdsSyncHistory';
 import { HorizontalDragScrollArea } from '@/app/components/ui/horizontal-drag-scroll';
 import { cn } from '@/app/components/ui/utils';
 import { readDashboardSnapshotCache, writeDashboardSnapshotCache } from '@/app/services/dashboardSnapshotCache';
 import {
+  ADS_DAILY_SYNC_HISTORY_UPDATED_EVENT,
   syncAdsApiToDailyAds,
 } from '@/app/services/adsDailySyncService';
 import {
@@ -257,6 +259,7 @@ export function AdvertiserDashboard({ userId }: { userId?: string }) {
 
   // Internal selection state for Owner viewing this dashboard
   const isOwner = hasPermission('dashboard.view_owner');
+  const canSyncAds = hasPermission('ads.manage');
   const [selectedAdvertiserId, setSelectedAdvertiserId] = useState<string>(userId || 'all');
   const [activeTab, setActiveTab] = useState<AdvertiserViewTab>('ads-summary');
   const [apiAdsByDateAccount, setApiAdsByDateAccount] = useState<Record<string, AdvertiserCsAccountMetric>>({});
@@ -267,7 +270,7 @@ export function AdvertiserDashboard({ userId }: { userId?: string }) {
   const [tiktokIntegrationConfigs, setTikTokIntegrationConfigs] = useState<TikTokAdsIntegrationConfig[]>([]);
   const [apiAccountMappings, setApiAccountMappings] = useState<AdAccountApiMapping[]>([]);
   const [apiRefreshNonce, setApiRefreshNonce] = useState(0);
-  const [apiSnapshotRefreshNonce, setApiSnapshotRefreshNonce] = useState(0);
+  const [apiSnapshotRefreshNonce, setApiSnapshotRefreshNonce] = useState(1);
   const [isApiDailySyncing, setIsApiDailySyncing] = useState(false);
   const [isPerformanceRangeLoading, setIsPerformanceRangeLoading] = useState(false);
   const [expandedCsDates, setExpandedCsDates] = useState<string[]>([]);
@@ -286,7 +289,14 @@ export function AdvertiserDashboard({ userId }: { userId?: string }) {
   React.useEffect(() => {
     if (refreshTrigger === lastMasterRefreshTriggerRef.current) return;
     lastMasterRefreshTriggerRef.current = refreshTrigger;
+    setApiSnapshotRefreshNonce((value) => value + 1);
   }, [refreshTrigger]);
+
+  React.useEffect(() => {
+    const refreshStoredSnapshots = () => setApiSnapshotRefreshNonce((value) => value + 1);
+    window.addEventListener(ADS_DAILY_SYNC_HISTORY_UPDATED_EVENT, refreshStoredSnapshots);
+    return () => window.removeEventListener(ADS_DAILY_SYNC_HISTORY_UPDATED_EVENT, refreshStoredSnapshots);
+  }, []);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -369,6 +379,7 @@ export function AdvertiserDashboard({ userId }: { userId?: string }) {
     try {
       const syncResult = await syncAdsApiToDailyAds({
         range: rangeParams,
+        actor: currentUser || undefined,
         context: {
           dailyAds,
           platforms,
@@ -387,6 +398,11 @@ export function AdvertiserDashboard({ userId }: { userId?: string }) {
           mappedOnly: true,
         },
       });
+      if (syncResult.busy) {
+        toast.info(syncResult.message || 'Sinkron iklan lain sedang berjalan.');
+        setApiAdsStatus('ready');
+        return;
+      }
 
       if (syncResult.providerStatuses.length === 0) {
         toast.info('Platform ini belum punya konektor API laporan iklan.');
@@ -420,6 +436,7 @@ export function AdvertiserDashboard({ userId }: { userId?: string }) {
     adAccountOwnerAssignments,
     adAccounts,
     csFilter,
+    currentUser,
     dailyAds,
     platforms,
     platformFilter,
@@ -2302,6 +2319,8 @@ export function AdvertiserDashboard({ userId }: { userId?: string }) {
             </div>
        </OperationalFilterPanel>
 
+        <AdsSyncHistory isSyncing={isApiDailySyncing} />
+
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as AdvertiserViewTab)} className="advertiserDashboardTabs space-y-4">
           <TabsViewport className="advertiserDashboardTabsViewport">
             <TabsRail className="advertiserDashboardTabsRail min-w-max">
@@ -3111,17 +3130,19 @@ export function AdvertiserDashboard({ userId }: { userId?: string }) {
                       {(isApiSyncBusy || isCsPerformanceDbHydrating) && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
                       {resolvedCsPerformanceApiStatusLabel}
                     </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 gap-2 bg-white dark:bg-slate-900"
-                      onClick={handleSyncAdsApiToDailyAds}
-                      disabled={!rangeParams || isApiSyncBusy}
-                    >
-                      <RefreshCw className={`h-4 w-4 ${isApiSyncBusy ? 'animate-spin' : ''}`} />
-                      Sinkron API
-                    </Button>
+                    {canSyncAds && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-2 bg-white dark:bg-slate-900"
+                        onClick={handleSyncAdsApiToDailyAds}
+                        disabled={!rangeParams || isApiSyncBusy}
+                      >
+                        <RefreshCw className={`h-4 w-4 ${isApiSyncBusy ? 'animate-spin' : ''}`} />
+                        Sinkron sekarang
+                      </Button>
+                    )}
                   </div>
                 </div>
               </CardHeader>

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, ReactNode, useEffect } from
 import { supabase } from '@/lib/supabaseClient';
 import { Session } from '@supabase/supabase-js';
 import { getSessionBackedEdgeHeaders } from '../../../services/internal/sessionClientHeaders';
+import { ADS_DAILY_SYNC_HISTORY_UPDATED_EVENT } from '../../../services/adsDailySyncService';
 import { buildMakeServerUrl } from '../../../services/internal/functionsBaseUrl';
 import { fetchWithTimeout, isRequestTimeoutError } from '../../../services/internal/fetchWithTimeout';
 import { recordPerfMetric, startPerfTimer } from '@/app/utils/perfTelemetry';
@@ -3780,6 +3781,17 @@ export const MasterDataProvider: React.FC<{
             setDailyAds((prev) => prev.filter((item) => item.id !== payload.old.id));
           }
         }
+      );
+
+      channel = channel.on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'daily_ads_sync_runs' },
+        (payload) => {
+          const status = String(payload.new?.status || '');
+          if (status === 'succeeded' || status === 'partial' || status === 'failed') {
+            window.dispatchEvent(new Event(ADS_DAILY_SYNC_HISTORY_UPDATED_EVENT));
+          }
+        },
       );
 
       channel = channel.on(

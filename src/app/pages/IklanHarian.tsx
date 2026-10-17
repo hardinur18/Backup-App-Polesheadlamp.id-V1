@@ -35,16 +35,18 @@ import { usePermissions } from '@/app/hooks/usePermissions';
 import { logActivity } from '@/app/services/auditService';
 import {
   buildAdsDailySyncPreview,
-  commitAdsDailySyncPreview,
   fetchRecentAdsDailySyncRuns,
+  formatAdsSyncHistoryTime as formatSyncHistoryTime,
   recordAdsDailySyncRun,
   reconcileAdsDailySyncPreviewRows,
+  syncAdsApiToDailyAds,
   type AdsDailySyncHistoryItem,
   type AdsDailySyncMode,
   type AdsDailySyncPreviewRow,
   type AdsDailySyncProviderStatus,
   type AdsProviderKey,
 } from '@/app/services/adsDailySyncService';
+import { AdsSyncHistory } from '@/app/components/AdsSyncHistory';
 import {
   isAdminManagementRole,
   isAdvertiserRole,
@@ -140,12 +142,6 @@ const adsProviderLabels: Record<AdsProviderKey, string> = {
 const getProviderKeyBySourceLabel = (label: string): AdsProviderKey | undefined =>
   (Object.entries(adsProviderLabels) as Array<[AdsProviderKey, string]>)
     .find(([, providerLabel]) => providerLabel === label)?.[0];
-
-const formatSyncHistoryTime = (value: string) => {
-  const parsedDate = new Date(value);
-  if (Number.isNaN(parsedDate.getTime())) return '-';
-  return format(parsedDate, 'dd MMM HH:mm', { locale: idLocale });
-};
 
 const summarizeApiRecapRowsForHistory = (
   rows: AdsDailySyncPreviewRow[],
@@ -1213,15 +1209,34 @@ export function IklanHarian() {
     setIsApiRecapSaving(true);
     const committedRange = selectedRecapRange;
     try {
-      const { inserted, updated } = await commitAdsDailySyncPreview(actionableRows);
-      await refreshAdPerformanceInputsForDateRange(committedRange);
-      await persistAdsSyncRun({
-        kind: 'commit',
-        rows: apiRecapRows,
-        providerStatuses: apiRecapProviderStatuses,
-        errors: apiRecapErrors,
-        commitResult: { inserted, updated },
+      const result = await syncAdsApiToDailyAds({
+        range: committedRange,
+        actor: currentUser || undefined,
+        context: {
+          dailyAds,
+          platforms,
+          adAccounts,
+          adAccountAssignments,
+          adAccountOwnerAssignments,
+          users,
+        },
+        filters: {
+          platformId: apiRecapPlatformId,
+          advertiserId: apiRecapAdvertiserId,
+          csId: apiRecapCsId,
+          mode: apiRecapMode,
+          preserveEdited: apiRecapPreserveEdited,
+          mappedOnly: false,
+        },
+        forceProviders: false,
       });
+      if (result.busy) {
+        toast.info(result.message || 'Sinkron iklan lain sedang berjalan.');
+        return;
+      }
+      const { inserted, updated } = result;
+      await refreshAdPerformanceInputsForDateRange(committedRange);
+      await refreshAdsSyncHistory();
       setDateRange({
         from: parseDateKey(committedRange.from),
         to: parseDateKey(committedRange.to),
@@ -1470,7 +1485,7 @@ export function IklanHarian() {
                    leadsDashboard: Number(item.leadsDashboard) || 0,
                    ppnAmount: Math.round(spendVal * (ppnRate/100)),
                    feeAmount: Math.round(spendVal * (feeRate/100)),
-                   editCount: 0,
+                   editCount: 1,
                }));
                successCount++;
            } else {
@@ -2034,21 +2049,9 @@ export function IklanHarian() {
             )}
           </div>
 
-          {adsSyncHistory.length > 0 && (
-            <div className="dailyAdsSyncHistoryList">
-              {adsSyncHistory.slice(0, 3).map((item) => (
-                <span key={item.id}>
-                  <strong>{item.kind === 'commit' ? 'Simpan' : 'Preview'}</strong>
-                  {formatSyncHistoryTime(item.createdAt)}
-                  {' · '}
-                  {item.range.from} s/d {item.range.to}
-                  {' · '}
-                  +{item.counts.inserted}/upd {item.counts.updated}
-                </span>
-              ))}
-            </div>
-          )}
         </section>
+
+        <AdsSyncHistory isSyncing={isApiRecapSaving} />
 
         {/* Filters & Content */}
         <OperationalFilterPanel className="dailyAdsFilterPanel">

@@ -29,6 +29,9 @@ import {
   fetchAdAccountApiMappings,
   type AdAccountApiMapping,
 } from '@/app/services/adApiIntegrationService';
+import { buildMakeServerUrl } from '@/app/services/internal/functionsBaseUrl';
+import { fetchWithTimeout } from '@/app/services/internal/fetchWithTimeout';
+import { getSessionBackedEdgeHeaders } from '@/app/services/internal/sessionClientHeaders';
 
 export type AdsProviderKey = 'meta' | 'google' | 'tiktok';
 export type AdsDailySyncMode = 'insert-missing' | 'update-existing';
@@ -134,6 +137,8 @@ export type AdsDailySyncRunResult = AdsDailySyncPreviewResult & {
   inserted: number;
   updated: number;
   actionableCount: number;
+  busy?: boolean;
+  message?: string;
 };
 
 type AdsSnapshotRow = MetaSnapshotRow | GoogleAdsSnapshotRow | TikTokAdsSnapshotRow;
@@ -170,6 +175,8 @@ type DailyAdDbRow = {
 type AdsDailySyncRunDbRow = {
   id: string;
   created_at?: string | null;
+  finished_at?: string | null;
+  status?: string | null;
   run_kind?: string | null;
   actor_id?: string | null;
   actor_name?: string | null;
@@ -212,6 +219,35 @@ const PROVIDER_PREVIEW_TIMEOUT_MS: Record<AdsProviderKey, number> = {
 
 const ADS_DAILY_SYNC_HISTORY_STORAGE_KEY = 'rhi.dailyAds.syncHistory.v1';
 const ADS_DAILY_SYNC_HISTORY_LIMIT = 20;
+export const ADS_DAILY_SYNC_HISTORY_UPDATED_EVENT = 'rhi:ads-sync-history-updated';
+
+export type AdsDailySyncUpdateHistory = {
+  recent: AdsDailySyncHistoryItem[];
+  lastUpdate: AdsDailySyncHistoryItem | null;
+  source: 'database' | 'local';
+};
+
+export const hasAdsSyncDataChanges = (item: AdsDailySyncHistoryItem) =>
+  item.kind === 'commit' && (item.counts.inserted > 0 || item.counts.updated > 0);
+
+export const formatAdsSyncHistoryTime = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return `${new Intl.DateTimeFormat('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(date)} WIB`;
+};
+
+export const getAdsSyncHistoryOutcome = (item: AdsDailySyncHistoryItem) => {
+  const hasError = item.errors.length > 0 || item.providerStatuses.some((provider) => provider.state === 'error');
+  if (item.kind === 'preview') return hasError ? 'Preview bermasalah' : 'Preview';
+  if (hasError) return hasAdsSyncDataChanges(item) ? 'Tersimpan sebagian' : 'Sinkron bermasalah';
+  if (hasAdsSyncDataChanges(item)) return 'Data tersimpan';
+  if (item.providerStatuses.length === 0) return 'Tidak ada konektor';
+  return 'Tanpa perubahan';
+};
 
 const createClientId = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -254,7 +290,7 @@ const normalizeHistoryModeFromDb = (value: unknown): AdsDailySyncMode | undefine
 
 const mapSyncRunFromDbRow = (row: AdsDailySyncRunDbRow): AdsDailySyncHistoryItem => ({
   id: String(row.id),
-  createdAt: row.created_at || new Date().toISOString(),
+  createdAt: row.finished_at || row.created_at || new Date().toISOString(),
   kind: row.run_kind === 'commit' ? 'commit' : 'preview',
   actorId: row.actor_id || undefined,
   actorName: row.actor_name || undefined,
@@ -290,7 +326,10 @@ const readLocalSyncHistory = (): AdsDailySyncHistoryItem[] => {
     const parsed = JSON.parse(window.localStorage.getItem(ADS_DAILY_SYNC_HISTORY_STORAGE_KEY) || '[]');
     return Array.isArray(parsed)
       ? parsed
-          .filter((item): item is AdsDailySyncHistoryItem => Boolean(item?.id && item?.createdAt && item?.range))
+          .filter((item): item is AdsDailySyncHistoryItem => Boolean(
+            item?.id && item?.createdAt && item?.range && item?.counts &&
+            Array.isArray(item?.providerStatuses) && Array.isArray(item?.errors),
+          ))
           .slice(0, ADS_DAILY_SYNC_HISTORY_LIMIT)
       : [];
   } catch {
@@ -631,9 +670,42 @@ export async function fetchRecentAdsDailySyncRuns(limit = 5): Promise<AdsDailySy
   return localRows;
 }
 
+export async function fetchAdsDailySyncUpdateHistory(): Promise<AdsDailySyncUpdateHistory> {
+  try {
+    // A completed no-op run still means the provider data was checked successfully.
+    const [recent, lastUpdate] = await Promise.all([
+      supabase.from('daily_ads_sync_runs').select('*')
+        .order('created_at', { ascending: false }).limit(5),
+      supabase.from('daily_ads_sync_runs').select('*')
+        .eq('run_kind', 'commit').in('status', ['succeeded', 'partial'])
+        .order('finished_at', { ascending: false }).limit(1),
+    ]);
+    if (recent.error) throw recent.error;
+    if (lastUpdate.error) throw lastUpdate.error;
+    const recentRows = (recent.data || []).map(mapSyncRunFromDbRow);
+    const lastUpdateRow = lastUpdate.data?.[0] ? mapSyncRunFromDbRow(lastUpdate.data[0]) : null;
+    writeLocalSyncHistory(lastUpdateRow ? [...recentRows.filter((row) => row.id !== lastUpdateRow.id), lastUpdateRow] : recentRows);
+    return { recent: recentRows, lastUpdate: lastUpdateRow, source: 'database' };
+  } catch {
+    const localRows = readLocalSyncHistory();
+    return {
+      recent: localRows.slice(0, 5),
+      lastUpdate: localRows.find(hasAdsSyncDataChanges) || null,
+      source: 'local',
+    };
+  }
+}
+
 export async function recordAdsDailySyncRun(input: RecordAdsDailySyncRunInput): Promise<AdsDailySyncHistoryItem> {
   const item = buildSyncHistoryItem(input);
   upsertLocalSyncHistory(item);
+
+  if (item.kind === 'preview') {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event(ADS_DAILY_SYNC_HISTORY_UPDATED_EVENT));
+    }
+    return item;
+  }
 
   try {
     const { data, error } = await supabase
@@ -651,6 +723,10 @@ export async function recordAdsDailySyncRun(input: RecordAdsDailySyncRunInput): 
       console.warn('[adsDailySync] sync history DB write skipped', error);
     }
     return item;
+  } finally {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event(ADS_DAILY_SYNC_HISTORY_UPDATED_EVENT));
+    }
   }
 }
 
@@ -1553,30 +1629,54 @@ export async function commitAdsDailySyncPreview(rows: AdsDailySyncPreviewRow[]):
 
 export async function syncAdsApiToDailyAds({
   range,
-  context,
   filters = {},
-  onProviderStatus,
+  forceProviders = true,
 }: {
   range: { from: string; to: string };
   context: AdsDailySyncContext;
   filters?: AdsDailySyncFilters;
   onProviderStatus?: (statuses: AdsDailySyncProviderStatus[]) => void;
+  actor?: Pick<User, 'id' | 'name' | 'role'>;
+  forceProviders?: boolean;
 }): Promise<AdsDailySyncRunResult> {
-  const preview = await buildAdsDailySyncPreview({
-    range,
-    context,
-    filters,
-    onProviderStatus,
-  });
-  const actionableRows = preview.rows.filter((row) => row.status === 'new' || row.status === 'update');
-  const commitResult = actionableRows.length > 0
-    ? await commitAdsDailySyncPreview(actionableRows)
-    : { inserted: 0, updated: 0 };
+  const response = await fetchWithTimeout(
+    buildMakeServerUrl('/ads/sync-run'),
+    {
+      method: 'POST',
+      headers: await getSessionBackedEdgeHeaders({ includeJsonContentType: true }),
+      body: JSON.stringify({
+        from: range.from,
+        to: range.to,
+        filters: { ...defaultFilters, ...filters },
+        forceProviders,
+      }),
+    },
+    180_000,
+    'Sinkronisasi iklan masih berlangsung terlalu lama. Periksa status pembaruan beberapa saat lagi.',
+  );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Gagal menjalankan sinkronisasi iklan di backend.');
+  }
+
+  const providerStatuses = Array.isArray(payload.providerStatuses) ? payload.providerStatuses : [];
+  const errors = Array.isArray(payload.errors) ? payload.errors.map(String) : [];
+  const inserted = Number(payload.counts?.inserted) || 0;
+  const updated = Number(payload.counts?.updated) || 0;
+  window.dispatchEvent(new Event(ADS_DAILY_SYNC_HISTORY_UPDATED_EVENT));
 
   return {
-    ...preview,
-    inserted: commitResult.inserted,
-    updated: commitResult.updated,
-    actionableCount: actionableRows.length,
+    rows: [],
+    providerStatuses,
+    errors,
+    insertedCount: inserted,
+    updatedCount: updated,
+    skippedCount: Number(payload.counts?.skipped) || 0,
+    unmappedCount: Number(payload.counts?.unmapped) || 0,
+    inserted,
+    updated,
+    actionableCount: inserted + updated,
+    busy: Boolean(payload.busy),
+    message: typeof payload.message === 'string' ? payload.message : undefined,
   };
 }
