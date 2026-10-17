@@ -175,6 +175,7 @@ const NAV_GROUPS: NavGroup[] = [
           { icon: Database, label: 'Master Data', id: 'master-data', permission: 'master_data.view' },
           { icon: ShieldCheck, label: 'Pengguna & Akses', id: 'users', permission: 'users.view' },
           { icon: Shield, label: 'Role & Permission', id: 'roles', permission: 'role_permissions.view' },
+          { icon: Activity, label: 'Kontrol & Integrasi', id: 'usage-control', permission: 'role_permissions.view' },
           { icon: MessageSquare, label: 'Template WhatsApp', id: 'wa-templates', permission: 'wa_template.view' },
         ],
       },

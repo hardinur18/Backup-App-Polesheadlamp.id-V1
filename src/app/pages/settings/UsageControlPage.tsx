@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/app
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
 import { useMasterData } from '@/app/pages/master-data/context';
+import { isOwnerLikeRole } from '@/app/data/roleHelpers';
 import {
   DEFAULT_USAGE_CONTROL_SETTINGS,
   USAGE_CONTROL_SETTING_LIMITS,
@@ -77,7 +78,7 @@ function formatHealthDate(value?: string | null) {
 
 export function UsageControlPage() {
   const { currentRole, currentUser } = useMasterData();
-  const canManage = currentRole === 'Owner';
+  const canManage = isOwnerLikeRole(currentRole);
   const [settings, setSettings] = React.useState<UsageControlSettings>(DEFAULT_USAGE_CONTROL_SETTINGS);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -299,7 +300,7 @@ export function UsageControlPage() {
         <Alert className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-100">
           <ShieldAlert className="h-4 w-4" />
           <AlertTitle>Akses khusus Owner</AlertTitle>
-          <AlertDescription>Pengaturan pembatasan refresh hanya bisa diubah oleh Owner.</AlertDescription>
+          <AlertDescription>Pengaturan pembatasan refresh hanya bisa diubah oleh Owner atau Super Admin.</AlertDescription>
         </Alert>
       </div>
     );

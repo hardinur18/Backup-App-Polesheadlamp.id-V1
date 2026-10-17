@@ -107,6 +107,10 @@ const RoleManagement = React.lazy(() =>
   import('../../pages/settings/RoleManagement').then((module) => ({ default: module.RoleManagement })),
 );
 
+const UsageControlPage = React.lazy(() =>
+  import('../../pages/settings/UsageControlPage').then((module) => ({ default: module.UsageControlPage })),
+);
+
 const TeknisiMobile = React.lazy(() =>
   import('../../pages/TeknisiMobile').then((module) => ({ default: module.TeknisiMobile })),
 );
@@ -663,6 +667,8 @@ export function AppLayout() {
         return <AuditLogPage onBack={() => handleNavigate('dashboard')} />;
       case 'roles':
         return <RoleManagement />;
+      case 'usage-control':
+        return <UsageControlPage />;
     }
   };
 

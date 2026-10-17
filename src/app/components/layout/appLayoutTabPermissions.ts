@@ -54,5 +54,6 @@ export const APP_LAYOUT_TAB_PERMISSIONS: Partial<Record<string, AppLayoutTabPerm
   'wa-templates': 'wa_template.view',
   'audit-logs': 'audit_logs.view',
   roles: 'role_permissions.view',
+  'usage-control': 'role_permissions.view',
   'teknisi-mobile': 'teknisi.view_mobile',
 };
