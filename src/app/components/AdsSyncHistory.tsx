@@ -40,6 +40,16 @@ export function AdsSyncHistory({ isSyncing = false }: { isSyncing?: boolean }) {
   }, [isSyncing]);
 
   const lastUpdate = history?.lastUpdate;
+  const providerSummary = lastUpdate?.providerStatuses
+    .map((provider) => {
+      const state = provider.state === 'success'
+        ? 'berhasil'
+        : provider.state === 'error'
+          ? 'gagal'
+          : 'tanpa data';
+      return `${provider.label} ${state}`;
+    })
+    .join(', ');
 
   return (
     <section className="adsSyncHistory" aria-label="Pembaruan terakhir data iklan">
@@ -79,6 +89,7 @@ export function AdsSyncHistory({ isSyncing = false }: { isSyncing?: boolean }) {
             {' / Periode '}{lastUpdate.range.from}{' s/d '}{lastUpdate.range.to}
             {' / '}{getAdsSyncHistoryOutcome(lastUpdate)}
             {' / '}{lastUpdate.counts.inserted} ditambah, {lastUpdate.counts.updated} diperbarui
+            {providerSummary ? ` / ${providerSummary}` : ''}
           </p>
         </div>
       )}
