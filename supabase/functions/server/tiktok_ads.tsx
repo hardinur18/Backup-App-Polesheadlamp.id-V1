@@ -981,7 +981,7 @@ async function buildTikTokLiveBreakdown(params: {
   };
 }
 
-async function syncTikTokSnapshotRange(params: {
+export async function syncTikTokSnapshotRange(params: {
   from: string;
   to: string;
   requestedAdvertiserId?: string;
@@ -1539,7 +1539,7 @@ app.get("/snapshots", async (c) => {
 app.post("/sync-snapshots", async (c) => {
   try {
     if (!isTrustedServiceRoleRequest(c)) {
-      const access = await requireAnyAdsPermission(c, ADS_VIEW_PERMISSIONS);
+      const access = await requireAnyAdsPermission(c, ADS_MANAGE_PERMISSIONS);
       if (!access.ok) return access.error;
     }
 

@@ -7,8 +7,8 @@ import permissionsRoute from "./permissions.tsx";
 import payrollRoute from "./payroll.tsx";
 import telegramRoute from "./telegram.tsx";
 import metaMessagingRoute from "./meta_messaging.tsx";
-import googleAdsRoute from "./google_ads.tsx";
-import tiktokAdsRoute from "./tiktok_ads.tsx";
+import googleAdsRoute, { syncGoogleAdsSnapshotRange } from "./google_ads.tsx";
+import tiktokAdsRoute, { syncTikTokSnapshotRange } from "./tiktok_ads.tsx";
 import {
   getRequesterAccessContext,
   hasEffectivePermission,
@@ -1683,6 +1683,544 @@ async function syncMetaSnapshotRange(params: {
   };
 }
 
+type AdsSyncTriggerSource = "manual" | "scheduled" | "reconcile";
+type AdsSyncProviderKey = "meta" | "google" | "tiktok";
+
+type AdsSyncProviderStatus = {
+  key: AdsSyncProviderKey;
+  label: string;
+  state: "success" | "empty" | "error";
+  count: number;
+  message: string;
+};
+
+type AdsSyncFilters = {
+  platformId?: string;
+  advertiserId?: string;
+  csId?: string;
+  adAccountId?: string;
+};
+
+const ADS_SYNC_PROVIDER_LABELS: Record<AdsSyncProviderKey, string> = {
+  meta: "Meta",
+  google: "Google Ads",
+  tiktok: "TikTok Ads",
+};
+
+const waitForAdsSyncRetry = (milliseconds: number) =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+const isTransientAdsSyncError = (error: unknown) =>
+  /timeout|timed out|429|rate.?limit|temporar|network|fetch|\b5\d\d\b/i.test(
+    error instanceof Error ? error.message : String(error || ""),
+  );
+
+async function runAdsProviderWithRetry<T>(operation: () => Promise<T>) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt === 3 || !isTransientAdsSyncError(error)) throw error;
+      await waitForAdsSyncRetry(attempt === 1 ? 1_000 : 3_000);
+    }
+  }
+  throw lastError;
+}
+
+const formatJakartaDateKey = (date: Date) => {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const valueByPart = new Map(parts.map((part) => [part.type, part.value]));
+  return `${valueByPart.get("year")}-${valueByPart.get("month")}-${valueByPart.get("day")}`;
+};
+
+const shiftDateKey = (value: string, days: number) => {
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
+const normalizeAdsExternalAccountId = (platformKey: string, value: unknown) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (platformKey === "meta") return normalized.replace(/^act_/, "").replace(/\D/g, "");
+  return normalized.replace(/[^a-z0-9]/g, "");
+};
+
+const isDateInsideAssignment = (
+  assignment: { start_date?: string | null; end_date?: string | null; status?: string | null },
+  date: string,
+) => assignment.status === "active" &&
+  Boolean(assignment.start_date && assignment.start_date <= date) &&
+  (!assignment.end_date || assignment.end_date >= date);
+
+async function materializeAdsSnapshotsToDailyAds(params: {
+  runId: string;
+  rows: AdsDailySnapshotRecord[];
+  filters: AdsSyncFilters;
+}) {
+  if (params.rows.length === 0) {
+    return {
+      inserted: 0,
+      updated: 0,
+      protectedManual: 0,
+      skipped: 0,
+      unmapped: 0,
+      totalMapped: 0,
+      spend: 0,
+    };
+  }
+
+  const [accountsResult, mappingsResult, assignmentsResult, ownersResult, existingResult] = await Promise.all([
+    supabase
+      .from("ad_accounts")
+      .select("id, platform_id, advertiser_id, sub_channel_id, status, ppn, fee"),
+    supabase
+      .from("ad_account_api_mappings")
+      .select("internal_ad_account_id, platform_key, external_account_id, status")
+      .eq("status", "active"),
+    supabase
+      .from("ad_account_assignments")
+      .select("ad_account_id, cs_id, sub_channel_id, start_date, end_date, status"),
+    supabase
+      .from("ad_account_owner_assignments")
+      .select("ad_account_id, advertiser_id, start_date, end_date, status"),
+    supabase
+      .from("daily_ads")
+      .select("id, date, ad_account_id, edit_count")
+      .gte("date", params.rows.reduce((value, row) => row.snapshotDate < value ? row.snapshotDate : value, params.rows[0]?.snapshotDate || "9999-12-31"))
+      .lte("date", params.rows.reduce((value, row) => row.snapshotDate > value ? row.snapshotDate : value, params.rows[0]?.snapshotDate || "0001-01-01")),
+  ]);
+
+  for (const result of [accountsResult, mappingsResult, assignmentsResult, ownersResult, existingResult]) {
+    if (result.error) throw new Error(result.error.message);
+  }
+
+  const activeAccountById = new Map(
+    (accountsResult.data || [])
+      .filter((account: any) => account.status === "active")
+      .map((account: any) => [String(account.id), account]),
+  );
+  const mappedAccountByExternalKey = new Map(
+    (mappingsResult.data || []).map((mapping: any) => [
+      `${mapping.platform_key}:${normalizeAdsExternalAccountId(mapping.platform_key, mapping.external_account_id)}`,
+      String(mapping.internal_ad_account_id),
+    ]),
+  );
+  const assignmentsByAccount = new Map<string, any[]>();
+  for (const assignment of assignmentsResult.data || []) {
+    const key = String((assignment as any).ad_account_id);
+    assignmentsByAccount.set(key, [...(assignmentsByAccount.get(key) || []), assignment]);
+  }
+  const ownersByAccount = new Map<string, any[]>();
+  for (const assignment of ownersResult.data || []) {
+    const key = String((assignment as any).ad_account_id);
+    ownersByAccount.set(key, [...(ownersByAccount.get(key) || []), assignment]);
+  }
+  const existingByKey = new Map(
+    (existingResult.data || []).map((row: any) => [`${row.date}:${row.ad_account_id}`, row]),
+  );
+
+  const groupedRows = new Map<string, {
+    date: string;
+    accountId: string;
+    spend: number;
+    conversions: number;
+    providerSyncedAt: string | null;
+  }>();
+  let unmapped = 0;
+  let ignored = 0;
+
+  for (const row of params.rows) {
+    const spend = Number(row.spend) || 0;
+    const conversions = Math.round(Number(row.conversions) || 0);
+    if (spend <= 0 && conversions <= 0) {
+      ignored += 1;
+      continue;
+    }
+
+    const mappedAccountId = row.internalAdAccountId || mappedAccountByExternalKey.get(
+      `${row.platformKey}:${normalizeAdsExternalAccountId(row.platformKey, row.externalAccountId)}`,
+    );
+    const account = mappedAccountId ? activeAccountById.get(String(mappedAccountId)) : null;
+    if (!account) {
+      unmapped += 1;
+      continue;
+    }
+
+    const accountId = String(account.id);
+    if (params.filters.platformId && params.filters.platformId !== "all" && account.platform_id !== params.filters.platformId) continue;
+    if (params.filters.adAccountId && params.filters.adAccountId !== "all" && accountId !== params.filters.adAccountId) continue;
+
+    const owner = (ownersByAccount.get(accountId) || [])
+      .filter((assignment) => isDateInsideAssignment(assignment, row.snapshotDate))
+      .sort((left, right) => String(right.start_date).localeCompare(String(left.start_date)))[0];
+    const advertiserId = owner?.advertiser_id || account.advertiser_id;
+    const assignment = (assignmentsByAccount.get(accountId) || [])
+      .filter((item) => isDateInsideAssignment(item, row.snapshotDate))
+      .sort((left, right) => String(right.start_date).localeCompare(String(left.start_date)))[0];
+
+    if (params.filters.advertiserId && params.filters.advertiserId !== "all" && advertiserId !== params.filters.advertiserId) continue;
+    if (params.filters.csId && params.filters.csId !== "all" && assignment?.cs_id !== params.filters.csId) continue;
+
+    const key = `${row.snapshotDate}:${accountId}`;
+    const current = groupedRows.get(key) || {
+      date: row.snapshotDate,
+      accountId,
+      spend: 0,
+      conversions: 0,
+      providerSyncedAt: null,
+    };
+    current.spend += spend;
+    current.conversions += conversions;
+    if (row.syncedAt && (!current.providerSyncedAt || row.syncedAt > current.providerSyncedAt)) {
+      current.providerSyncedAt = row.syncedAt;
+    }
+    groupedRows.set(key, current);
+  }
+
+  let inserted = 0;
+  let updated = 0;
+  let protectedManual = 0;
+  const now = new Date().toISOString();
+
+  for (const row of groupedRows.values()) {
+    const account: any = activeAccountById.get(row.accountId);
+    const owner = (ownersByAccount.get(row.accountId) || [])
+      .filter((assignment) => isDateInsideAssignment(assignment, row.date))
+      .sort((left, right) => String(right.start_date).localeCompare(String(left.start_date)))[0];
+    const assignment = (assignmentsByAccount.get(row.accountId) || [])
+      .filter((item) => isDateInsideAssignment(item, row.date))
+      .sort((left, right) => String(right.start_date).localeCompare(String(left.start_date)))[0];
+    const existing: any = existingByKey.get(`${row.date}:${row.accountId}`);
+
+    if (existing && Number(existing.edit_count || 0) > 0) {
+      protectedManual += 1;
+      continue;
+    }
+
+    const payload = {
+      date: row.date,
+      advertiser_id: owner?.advertiser_id || account.advertiser_id,
+      platform_id: account.platform_id,
+      sub_channel_id: assignment?.sub_channel_id || account.sub_channel_id || null,
+      ad_account_id: row.accountId,
+      cs_id: assignment?.cs_id || null,
+      amount_spent: Math.round(row.spend),
+      leads_dashboard: row.conversions,
+      ppn_amount: Math.round(row.spend * ((Number(account.ppn) || 0) / 100)),
+      fee_amount: Math.round(row.spend * ((Number(account.fee) || 0) / 100)),
+      sync_source: "api",
+      provider_synced_at: row.providerSyncedAt,
+      last_sync_run_id: params.runId,
+      synced_at: now,
+    };
+
+    if (existing) {
+      const { data, error } = await supabase
+        .from("daily_ads")
+        .update(payload)
+        .eq("id", existing.id)
+        .or("edit_count.is.null,edit_count.eq.0")
+        .select("id");
+      if (error) throw new Error(error.message);
+      if ((data || []).length > 0) updated += 1;
+      else protectedManual += 1;
+      continue;
+    }
+
+    const { error } = await supabase
+      .from("daily_ads")
+      .insert({ id: crypto.randomUUID(), ...payload, edit_count: 0 });
+    if (!error) {
+      inserted += 1;
+      continue;
+    }
+    if (error.code !== "23505") throw new Error(error.message);
+
+    const { data: concurrentRows, error: concurrentReadError } = await supabase
+      .from("daily_ads")
+      .select("id, edit_count")
+      .eq("date", row.date)
+      .eq("ad_account_id", row.accountId)
+      .limit(1);
+    if (concurrentReadError) throw new Error(concurrentReadError.message);
+    const concurrent = concurrentRows?.[0];
+    if (!concurrent || Number(concurrent.edit_count || 0) > 0) {
+      protectedManual += 1;
+      continue;
+    }
+    const { data: updatedRows, error: updateError } = await supabase
+      .from("daily_ads")
+      .update(payload)
+      .eq("id", concurrent.id)
+      .or("edit_count.is.null,edit_count.eq.0")
+      .select("id");
+    if (updateError) throw new Error(updateError.message);
+    if ((updatedRows || []).length > 0) updated += 1;
+    else protectedManual += 1;
+  }
+
+  return {
+    inserted,
+    updated,
+    protectedManual,
+    skipped: ignored + protectedManual,
+    unmapped,
+    totalMapped: groupedRows.size,
+    spend: Array.from(groupedRows.values()).reduce((sum, row) => sum + row.spend, 0),
+  };
+}
+
+async function executeAdsDailySync(params: {
+  runId: string;
+  range: { from: string; to: string };
+  filters: AdsSyncFilters;
+  forceProviders: boolean;
+}) {
+  const providerOperations: Array<{
+    key: AdsSyncProviderKey;
+    operation: () => Promise<{ rows: AdsDailySnapshotRecord[]; latestSyncedAt?: string | null; servedFrom?: string }>;
+  }> = [
+    {
+      key: "meta",
+      operation: () => syncMetaSnapshotRange({
+        from: params.range.from,
+        to: params.range.to,
+        force: params.forceProviders,
+        minFreshMinutes: 10,
+        mappedOnly: true,
+      }),
+    },
+    {
+      key: "google",
+      operation: () => syncGoogleAdsSnapshotRange({
+        from: params.range.from,
+        to: params.range.to,
+        force: params.forceProviders,
+        minFreshMinutes: 10,
+      }),
+    },
+    {
+      key: "tiktok",
+      operation: () => syncTikTokSnapshotRange({
+        from: params.range.from,
+        to: params.range.to,
+        force: params.forceProviders,
+        minFreshMinutes: 10,
+      }),
+    },
+  ];
+
+  const settled = await Promise.allSettled(
+    providerOperations.map(({ operation }) => runAdsProviderWithRetry(operation)),
+  );
+  const providerStatuses: AdsSyncProviderStatus[] = [];
+  const rows: AdsDailySnapshotRecord[] = [];
+  const errors: string[] = [];
+
+  settled.forEach((result, index) => {
+    const key = providerOperations[index].key;
+    const label = ADS_SYNC_PROVIDER_LABELS[key];
+    if (result.status === "rejected") {
+      const message = result.reason instanceof Error ? result.reason.message : String(result.reason || "Sinkron gagal.");
+      errors.push(`${label}: ${message}`);
+      providerStatuses.push({ key, label, state: "error", count: 0, message });
+      return;
+    }
+    const providerRows = result.value.rows || [];
+    rows.push(...providerRows);
+    providerStatuses.push({
+      key,
+      label,
+      state: providerRows.length > 0 ? "success" : "empty",
+      count: providerRows.length,
+      message: providerRows.length > 0
+        ? `${providerRows.length} snapshot tersedia.`
+        : "Provider berhasil diperiksa, tetapi tidak ada snapshot pada periode ini.",
+    });
+  });
+
+  if (settled.every((result) => result.status === "rejected")) {
+    throw Object.assign(new Error(errors[0] || "Semua provider iklan gagal disinkronkan."), {
+      providerStatuses,
+      syncErrors: errors,
+    });
+  }
+
+  const counts = await materializeAdsSnapshotsToDailyAds({
+    runId: params.runId,
+    rows,
+    filters: params.filters,
+  });
+  return { providerStatuses, errors, counts };
+}
+
+function isTrustedAdsSchedulerRequest(c: any) {
+  const expected = String(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "").trim();
+  const provided = String(
+    c.req.header("x-service-role-key") ||
+    c.req.header("x-supabase-service-role-key") ||
+    c.req.header("x-scheduler-secret") ||
+    "",
+  ).trim();
+  return Boolean(expected && provided && expected === provided);
+}
+
+app.post("/make-server-f781cd00/ads/sync-run", async (c) => {
+  const trustedScheduler = isTrustedAdsSchedulerRequest(c);
+  const auth = trustedScheduler
+    ? { requester: null, response: null }
+    : await requireAuthorizedRequester(c, [ADS_MANAGE_PERMISSION]);
+  if (auth.response) return auth.response;
+
+  const body = await readJsonBody(c);
+  const requestedTrigger = body?.triggerSource;
+  const triggerSource: AdsSyncTriggerSource = trustedScheduler
+    ? requestedTrigger === "reconcile" ? "reconcile" : "scheduled"
+    : "manual";
+  const today = formatJakartaDateKey(new Date());
+  const defaultFrom = triggerSource === "reconcile" ? shiftDateKey(today, -6) : shiftDateKey(today, -1);
+  const from = typeof body?.from === "string" ? body.from : defaultFrom;
+  const to = typeof body?.to === "string" ? body.to : today;
+  if (!isValidDateParam(from) || !isValidDateParam(to) || from! > to!) {
+    return c.json({ error: "Rentang sinkron wajib menggunakan format YYYY-MM-DD yang valid." }, 400);
+  }
+  if (diffInDaysInclusive(from!, to!) > 92) {
+    return c.json({ error: "Rentang sinkron maksimal 92 hari per proses." }, 400);
+  }
+
+  const filters: AdsSyncFilters = {
+    platformId: typeof body?.filters?.platformId === "string" ? body.filters.platformId : undefined,
+    advertiserId: typeof body?.filters?.advertiserId === "string" ? body.filters.advertiserId : undefined,
+    csId: typeof body?.filters?.csId === "string" ? body.filters.csId : undefined,
+    adAccountId: typeof body?.filters?.adAccountId === "string" ? body.filters.adAccountId : undefined,
+  };
+  const forceProviders = typeof body?.forceProviders === "boolean"
+    ? body.forceProviders
+    : triggerSource !== "scheduled";
+  const runId = crypto.randomUUID();
+  const actorId = auth.requester?.authUser.id || null;
+  const actorName = auth.requester?.actorName || (triggerSource === "reconcile" ? "Rekonsiliasi Otomatis" : "Sinkron Otomatis");
+  const actorRole = auth.requester?.role || "System";
+  const startedAt = new Date().toISOString();
+
+  const { data: claimed, error: claimError } = await supabase.rpc("claim_ads_daily_sync_lock", {
+    p_run_id: runId,
+    p_ttl_seconds: 900,
+  });
+  if (claimError) return c.json({ error: `Gagal mengambil lock sinkron: ${claimError.message}` }, 500);
+  if (!claimed) {
+    return c.json({
+      busy: true,
+      status: "skipped",
+      message: "Sinkron lain sedang berjalan. Data akan diperbarui oleh proses tersebut.",
+    }, 202);
+  }
+
+  const baseRun = {
+    id: runId,
+    created_at: startedAt,
+    started_at: startedAt,
+    heartbeat_at: startedAt,
+    run_kind: "commit",
+    trigger_source: triggerSource,
+    status: "running",
+    actor_id: actorId,
+    actor_name: actorName,
+    actor_role: actorRole,
+    range_from: from,
+    range_to: to,
+    platform_id: filters.platformId && filters.platformId !== "all" ? filters.platformId : null,
+    advertiser_id: filters.advertiserId && filters.advertiserId !== "all" ? filters.advertiserId : null,
+    cs_id: filters.csId && filters.csId !== "all" ? filters.csId : null,
+    mode: "update-existing",
+    preserve_edited: true,
+  };
+  const { error: startError } = await supabase.from("daily_ads_sync_runs").insert(baseRun);
+  if (startError) {
+    await supabase.rpc("release_ads_daily_sync_lock", {
+      p_run_id: runId,
+      p_status: "failed",
+      p_error: startError.message,
+    });
+    return c.json({ error: `Gagal mencatat proses sinkron: ${startError.message}` }, 500);
+  }
+
+  try {
+    const result = await executeAdsDailySync({
+      runId,
+      range: { from: from!, to: to! },
+      filters,
+      forceProviders,
+    });
+    const status = result.errors.length > 0 ? "partial" : "succeeded";
+    const finishedAt = new Date().toISOString();
+    const { error: finishError } = await supabase
+      .from("daily_ads_sync_runs")
+      .update({
+        status,
+        finished_at: finishedAt,
+        heartbeat_at: finishedAt,
+        inserted_count: result.counts.inserted,
+        updated_count: result.counts.updated,
+        new_count: result.counts.inserted,
+        update_count: result.counts.updated,
+        skipped_count: result.counts.skipped,
+        unmapped_count: result.counts.unmapped,
+        spend: result.counts.spend,
+        provider_statuses: result.providerStatuses,
+        errors: result.errors,
+        error_message: result.errors.join(" | ") || null,
+      })
+      .eq("id", runId);
+    if (finishError) throw new Error(finishError.message);
+    await supabase.rpc("release_ads_daily_sync_lock", {
+      p_run_id: runId,
+      p_status: status,
+      p_error: result.errors.join(" | ") || null,
+    });
+    return c.json({
+      runId,
+      status,
+      triggerSource,
+      range: { from, to },
+      counts: result.counts,
+      providerStatuses: result.providerStatuses,
+      errors: result.errors,
+      finishedAt,
+    });
+  } catch (error: any) {
+    const message = error instanceof Error ? error.message : "Sinkronisasi iklan gagal.";
+    const providerStatuses = Array.isArray(error?.providerStatuses) ? error.providerStatuses : [];
+    const errors = Array.isArray(error?.syncErrors) ? error.syncErrors : [message];
+    const finishedAt = new Date().toISOString();
+    await supabase
+      .from("daily_ads_sync_runs")
+      .update({
+        status: "failed",
+        finished_at: finishedAt,
+        heartbeat_at: finishedAt,
+        provider_statuses: providerStatuses,
+        errors,
+        error_message: message,
+      })
+      .eq("id", runId);
+    await supabase.rpc("release_ads_daily_sync_lock", {
+      p_run_id: runId,
+      p_status: "failed",
+      p_error: message,
+    });
+    console.error("Ads daily sync failed:", error);
+    return c.json({ error: message, runId, status: "failed", providerStatuses, errors }, 500);
+  }
+});
+
 // Health check endpoint
 app.get("/make-server-f781cd00/health", (c) => {
   return c.json({ status: "ok" });
@@ -1942,8 +2480,10 @@ app.get("/make-server-f781cd00/meta/snapshots", async (c) => {
 
 app.post("/make-server-f781cd00/meta/sync-snapshots", async (c) => {
   try {
-    const auth = await requireAuthorizedRequester(c, ADS_REFERENCE_READ_PERMISSIONS);
-    if (auth.response) return auth.response;
+    if (!isTrustedAdsSchedulerRequest(c)) {
+      const auth = await requireAuthorizedRequester(c, [ADS_MANAGE_PERMISSION]);
+      if (auth.response) return auth.response;
+    }
 
     if (!META_ACCESS_TOKEN && !META_DM_USER_TOKEN) {
       return c.json({ error: "META_ACCESS_TOKEN atau META_DM_USER_TOKEN belum diatur di server." }, 503);

@@ -782,7 +782,7 @@ async function loadGoogleIntegrationConfigs() {
   )) as GoogleAdsIntegrationConfigRecord[];
 }
 
-async function syncGoogleAdsSnapshotRange(params: {
+export async function syncGoogleAdsSnapshotRange(params: {
   from: string;
   to: string;
   requestedCustomerId?: string;
@@ -1326,7 +1326,7 @@ app.get("/snapshots", async (c) => {
 app.post("/sync-snapshots", async (c) => {
   try {
     if (!isTrustedServiceRoleRequest(c)) {
-      const access = await requireAnyAdsPermission(c, ADS_VIEW_PERMISSIONS);
+      const access = await requireAnyAdsPermission(c, ADS_MANAGE_PERMISSIONS);
       if (!access.ok) return access.error;
     }
 
