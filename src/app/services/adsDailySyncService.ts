@@ -701,7 +701,7 @@ export async function fetchAdsDailySyncUpdateHistory(): Promise<AdsDailySyncUpda
         .order('created_at', { ascending: false }).limit(5),
       supabase.from('daily_ads_sync_runs').select('*')
         .eq('run_kind', 'commit').in('status', ['succeeded', 'partial'])
-        .order('finished_at', { ascending: false }).limit(1),
+        .order('finished_at', { ascending: false, nullsFirst: false }).limit(1),
     ]);
     if (recent.error) throw recent.error;
     if (lastUpdate.error) throw lastUpdate.error;

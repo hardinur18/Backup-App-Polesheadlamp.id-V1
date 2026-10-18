@@ -350,7 +350,7 @@ test('ads history uses the latest completed sync even when no rows changed', asy
     const isLastUpdate = url.searchParams.get('run_kind') === 'eq.commit';
     if (isLastUpdate) {
       assert.equal(url.searchParams.get('status'), 'in.(succeeded,partial)');
-      assert.equal(url.searchParams.get('order'), 'finished_at.desc');
+      assert.equal(url.searchParams.get('order'), 'finished_at.desc.nullslast');
       assert.equal(url.searchParams.get('limit'), '1');
     }
     return new Response(JSON.stringify(isLastUpdate ? [saved] : previews), {

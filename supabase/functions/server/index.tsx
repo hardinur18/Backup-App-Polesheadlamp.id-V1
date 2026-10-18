@@ -2087,7 +2087,7 @@ app.get("/make-server-f781cd00/ads/sync-status", async (c) => {
       .select("*")
       .eq("run_kind", "commit")
       .in("status", ["succeeded", "partial"])
-      .order("finished_at", { ascending: false })
+      .order("finished_at", { ascending: false, nullsFirst: false })
       .limit(1),
     supabase
       .from("ads_sync_runtime")
