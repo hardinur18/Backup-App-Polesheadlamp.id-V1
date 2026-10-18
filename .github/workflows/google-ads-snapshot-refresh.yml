@@ -6,9 +6,6 @@ on:
       - main
     paths:
       - '.github/workflows/google-ads-snapshot-refresh.yml'
-  schedule:
-    - cron: '*/15 * * * *'
-    - cron: '17 19 * * *'
   workflow_dispatch:
 
 env:
@@ -18,7 +15,7 @@ env:
 jobs:
   sync_incremental:
     name: Sync Today and Yesterday
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.schedule == '*/15 * * * *'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     concurrency:
       group: ads-daily-sync
@@ -73,70 +70,6 @@ jobs:
         run: |
           echo "### Ads daily automatic sync" >> "$GITHUB_STEP_SUMMARY"
           echo "- Window: today and yesterday" >> "$GITHUB_STEP_SUMMARY"
-          if [ -f ads-sync-result.json ]; then
-            echo "- Status: $(jq -r '.status // .message // "unknown"' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Inserted: $(jq -r '.counts.inserted // 0' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Updated: $(jq -r '.counts.updated // 0' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
-            jq '{status, triggerSource, range, counts, providers: [.providerStatuses[]? | {key, state, count}], errors}' ads-sync-result.json
-          fi
-
-  reconcile_recent:
-    name: Reconcile Last Seven Days
-    if: github.event_name == 'schedule' && github.event.schedule == '17 19 * * *'
-    runs-on: ubuntu-latest
-    concurrency:
-      group: ads-daily-sync
-      cancel-in-progress: false
-    permissions:
-      contents: read
-    env:
-      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-    steps:
-      - name: Validate scheduler secrets
-        run: |
-          test -n "$SUPABASE_URL"
-          test -n "$SUPABASE_ANON_KEY"
-          test -n "$SUPABASE_SERVICE_ROLE_KEY"
-          node <<'NODE'
-          const expectedRef = process.env.PRODUCTION_SUPABASE_PROJECT_REF;
-          const expectedUrl = `https://${expectedRef}.supabase.co`;
-          if (process.env.SUPABASE_URL !== expectedUrl) {
-            throw new Error(`Scheduler target must be ${expectedUrl}`);
-          }
-
-          for (const name of ['SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY']) {
-            const token = process.env[name] || '';
-            const payloadPart = token.split('.')[1];
-            if (!payloadPart) continue;
-            const payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'));
-            if (payload.ref && payload.ref !== expectedRef) {
-              throw new Error(`${name} belongs to Supabase project ${payload.ref}, expected ${expectedRef}`);
-            }
-          }
-          NODE
-
-      - name: Reconcile recent ads data
-        run: |
-          curl --fail-with-body --silent --show-error \
-            --retry 2 --retry-all-errors --max-time 300 \
-            -X POST "$SUPABASE_URL/functions/v1/make-server-f781cd00/ads/sync-run" \
-            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
-            -H "Content-Type: application/json" \
-            -H "x-service-role-key: $SUPABASE_SERVICE_ROLE_KEY" \
-            --data '{"triggerSource":"reconcile","forceProviders":true}' \
-            --output ads-sync-result.json
-
-          jq -e '
-            (.busy == true and .status == "skipped") or
-            ((.runId | type == "string") and (.status == "succeeded" or .status == "partial"))
-          ' ads-sync-result.json >/dev/null
-
-      - name: Publish summary
-        if: always()
-        run: |
-          echo "### Ads daily reconciliation" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Window: last seven days" >> "$GITHUB_STEP_SUMMARY"
           if [ -f ads-sync-result.json ]; then
             echo "- Status: $(jq -r '.status // .message // "unknown"' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"
             echo "- Inserted: $(jq -r '.counts.inserted // 0' ads-sync-result.json)" >> "$GITHUB_STEP_SUMMARY"

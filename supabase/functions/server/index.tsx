@@ -114,7 +114,7 @@ app.use(
   "/*",
   cors({
     origin: resolveCorsOrigin,
-    allowHeaders: ["Content-Type", "Authorization", "x-client-token", "X-Client-Token", "x-service-role-key"],
+    allowHeaders: ["Content-Type", "Authorization", "x-client-token", "X-Client-Token", "x-service-role-key", "x-scheduler-secret"],
     allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     exposeHeaders: ["Content-Length"],
     maxAge: 600,
@@ -2061,15 +2061,32 @@ async function executeAdsDailySync(params: {
   return { providerStatuses, errors, counts };
 }
 
-function isTrustedAdsSchedulerRequest(c: any) {
+async function sha256Hex(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function isTrustedAdsSchedulerRequest(c: any) {
   const expected = String(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "").trim();
-  const provided = String(
-    c.req.header("x-service-role-key") ||
-    c.req.header("x-supabase-service-role-key") ||
-    c.req.header("x-scheduler-secret") ||
-    "",
+  const providedServiceRole = String(
+    c.req.header("x-service-role-key") || c.req.header("x-supabase-service-role-key") || "",
   ).trim();
-  return Boolean(expected && provided && expected === provided);
+  if (expected && providedServiceRole && expected === providedServiceRole) return true;
+
+  const schedulerSecret = String(c.req.header("x-scheduler-secret") || "").trim();
+  if (!schedulerSecret) return false;
+
+  const { data, error } = await supabase
+    .from("ads_sync_runtime")
+    .select("scheduler_token_hash")
+    .eq("id", "daily-ads")
+    .maybeSingle();
+  if (error || !data?.scheduler_token_hash) return false;
+
+  return data.scheduler_token_hash === await sha256Hex(schedulerSecret);
 }
 
 app.get("/make-server-f781cd00/ads/sync-status", async (c) => {
@@ -2111,7 +2128,7 @@ app.get("/make-server-f781cd00/ads/sync-status", async (c) => {
 });
 
 app.post("/make-server-f781cd00/ads/sync-run", async (c) => {
-  const trustedScheduler = isTrustedAdsSchedulerRequest(c);
+  const trustedScheduler = await isTrustedAdsSchedulerRequest(c);
   const auth = trustedScheduler
     ? { requester: null, response: null }
     : await requireAuthorizedRequester(c, [ADS_MANAGE_PERMISSION]);

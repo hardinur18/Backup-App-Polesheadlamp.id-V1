@@ -133,6 +133,34 @@ jobs:
           $changed_files
           EOF
 
+      - name: Configure ads sync database cron
+        if: env.HAS_SUPABASE_ACCESS_TOKEN == 'true'
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          test -n "$SUPABASE_ANON_KEY"
+          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+
+          scheduler_token="$(openssl rand -hex 32)"
+          request_body="$(jq -nc \
+            --arg projectUrl "https://${SUPABASE_PROJECT_REF}.supabase.co" \
+            --arg publishableKey "$SUPABASE_ANON_KEY" \
+            --arg schedulerToken "$scheduler_token" \
+            '{p_project_url:$projectUrl,p_publishable_key:$publishableKey,p_scheduler_token:$schedulerToken}')"
+
+          curl --fail-with-body --silent --show-error \
+            --retry 2 --retry-all-errors --max-time 60 \
+            -X POST "https://${SUPABASE_PROJECT_REF}.supabase.co/rest/v1/rpc/configure_ads_daily_sync_cron" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            --data "$request_body" \
+            --output ads-sync-cron-result.json
+
+          jq -e '.configured == true and (.incrementalJobId | type == "number") and (.reconcileJobId | type == "number")' \
+            ads-sync-cron-result.json >/dev/null
+
       - name: Publish deployment summary
         if: env.HAS_SUPABASE_ACCESS_TOKEN == 'true'
         run: |
@@ -144,3 +172,4 @@ jobs:
           else
             echo "- Mode: changed SQL files via \`supabase db query --linked\`" >> "$GITHUB_STEP_SUMMARY"
           fi
+          echo "- Ads sync cron: every 15 minutes; seven-day reconciliation nightly" >> "$GITHUB_STEP_SUMMARY"
