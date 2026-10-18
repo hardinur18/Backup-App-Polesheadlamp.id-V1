@@ -587,6 +587,9 @@ export function AdvertiserDashboard({ userId }: { userId?: string }) {
   );
 
   const adAccountAssignmentCacheKey = useMemo(() => {
+    const accountKeys = adAccounts.map((account) =>
+      `account:${account.id}:${account.status || ''}`,
+    );
     const ownerKeys = adAccountOwnerAssignments.map((assignment) =>
       `owner:${assignment.adAccountId}:${assignment.advertiserId}:${assignment.status}:${assignment.startDate}:${assignment.endDate || ''}`,
     );
@@ -609,8 +612,8 @@ export function AdvertiserDashboard({ userId }: { userId?: string }) {
       ),
     ];
 
-    return [...ownerKeys, ...csKeys, ...integrationKeys].sort().join('|');
-  }, [adAccountAssignments, adAccountOwnerAssignments, apiAccountMappings, googleIntegrationConfigs, metaIntegrationConfigs, tiktokIntegrationConfigs]);
+    return [...accountKeys, ...ownerKeys, ...csKeys, ...integrationKeys].sort().join('|');
+  }, [adAccountAssignments, adAccountOwnerAssignments, adAccounts, apiAccountMappings, googleIntegrationConfigs, metaIntegrationConfigs, tiktokIntegrationConfigs]);
 
   const activeAdvertiserAccounts = useMemo(() => {
     return adAccounts.filter((account) =>
@@ -1041,6 +1044,9 @@ export function AdvertiserDashboard({ userId }: { userId?: string }) {
     const byName = new Map<string, (typeof adAccounts)[number]>();
     const byExternalId = new Map<string, (typeof adAccounts)[number]>();
     const byExternalName = new Map<string, (typeof adAccounts)[number]>();
+    const inactiveInternalIds = new Set<string>();
+    const inactiveExternalIds = new Set<string>();
+    const allAccountsById = new Map(adAccounts.map((account) => [account.id, account]));
 
     const registerExternalPairing = (
       account: (typeof adAccounts)[number] | undefined,
@@ -1085,10 +1091,18 @@ export function AdvertiserDashboard({ userId }: { userId?: string }) {
 
     for (const mapping of apiAccountMappings) {
       if (mapping.status !== 'active') continue;
+      const mappedAccount = allAccountsById.get(mapping.internalAdAccountId);
+      if (mappedAccount && !isActiveDataStatus(mappedAccount.status)) {
+        inactiveInternalIds.add(mappedAccount.id);
+        for (const key of buildExternalAccountLookupKeys(mapping.platformKey, mapping.externalAccountId)) {
+          inactiveExternalIds.add(key);
+        }
+        continue;
+      }
       registerExternalPairing(byId.get(mapping.internalAdAccountId), mapping.platformKey, mapping.externalAccountId);
     }
 
-    return { byId, byName, byExternalId, byExternalName };
+    return { byId, byName, byExternalId, byExternalName, inactiveInternalIds, inactiveExternalIds };
   }, [accountMatchesTargetAdvertiser, adAccounts, apiAccountMappings, googleIntegrationConfigs, metaIntegrationConfigs, platforms, tiktokIntegrationConfigs]);
 
   React.useEffect(() => {
@@ -1156,6 +1170,20 @@ export function AdvertiserDashboard({ userId }: { userId?: string }) {
       return null;
     };
 
+    const isMappedToInactiveAccount = (row: AdsSnapshotRowLike) => {
+      const platformName = platforms.find((platform) => platform.id === row.platformId)?.name;
+      const platformKey = row.platformKey || resolvePlatformKey(platformName || row.externalAccountName);
+      const externalKeys = buildExternalAccountLookupKeys(platformKey, row.externalAccountId);
+
+      if (externalKeys.some((key) => adAccountLookup.inactiveExternalIds.has(key))) return true;
+      if (externalKeys.some((key) => adAccountLookup.byExternalId.has(key))) return false;
+
+      return Boolean(
+        row.internalAdAccountId &&
+        adAccountLookup.inactiveInternalIds.has(row.internalAdAccountId),
+      );
+    };
+
     const addSnapshotRows = (
       resultByDateAccount: Record<string, AdvertiserCsAccountMetric>,
       unmappedByKey: Map<string, ApiUnmappedSnapshot>,
@@ -1164,6 +1192,10 @@ export function AdvertiserDashboard({ userId }: { userId?: string }) {
       for (const row of rows) {
         const date = row.snapshotDate;
         if (!date || date < rangeParams.from || date > rangeParams.to) continue;
+
+        // Keep provider history for audit without raising a false mapping alert for
+        // accounts that are intentionally inactive in internal master data.
+        if (isMappedToInactiveAccount(row)) continue;
 
         const adAccount = resolveAdAccount(row);
         if (!adAccount) {

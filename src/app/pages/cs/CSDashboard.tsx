@@ -890,6 +890,9 @@ export function CSDashboard({ userId }: { userId?: string }) {
     const byName = new Map<string, (typeof adAccounts)[number]>();
     const byExternalId = new Map<string, (typeof adAccounts)[number]>();
     const byExternalName = new Map<string, (typeof adAccounts)[number]>();
+    const inactiveInternalIds = new Set<string>();
+    const inactiveExternalIds = new Set<string>();
+    const allAccountsById = new Map(adAccounts.map((account) => [account.id, account]));
 
     const registerExternalPairing = (
       account: (typeof adAccounts)[number] | undefined,
@@ -934,10 +937,18 @@ export function CSDashboard({ userId }: { userId?: string }) {
 
     for (const mapping of apiAccountMappings) {
       if (mapping.status !== 'active') continue;
+      const mappedAccount = allAccountsById.get(mapping.internalAdAccountId);
+      if (mappedAccount && !isActiveDataStatus(mappedAccount.status)) {
+        inactiveInternalIds.add(mappedAccount.id);
+        for (const key of buildExternalAccountLookupKeys(mapping.platformKey, mapping.externalAccountId)) {
+          inactiveExternalIds.add(key);
+        }
+        continue;
+      }
       registerExternalPairing(byId.get(mapping.internalAdAccountId), mapping.platformKey, mapping.externalAccountId);
     }
 
-    return { byId, byName, byExternalId, byExternalName };
+    return { byId, byName, byExternalId, byExternalName, inactiveInternalIds, inactiveExternalIds };
   }, [adAccounts, apiAccountMappings, googleIntegrationConfigs, metaIntegrationConfigs, platforms, shouldShowAdAccountInCsView, tiktokIntegrationConfigs]);
 
   const scopedApiPlatformKeys = useMemo(() => {
@@ -968,6 +979,10 @@ export function CSDashboard({ userId }: { userId?: string }) {
       ].join(':'))
       .sort()
       .join('|');
+    const accountStatusPart = adAccounts
+      .map((account) => `${account.id}:${account.status || ''}`)
+      .sort()
+      .join('|');
 
     const assignmentPart = adAccountAssignments
       .filter((assignment) => assignment.status === 'active')
@@ -996,7 +1011,7 @@ export function CSDashboard({ userId }: { userId?: string }) {
       ),
     ].sort().join('|');
 
-    return `${accountPart}::${assignmentPart}::${integrationPart}`;
+    return `${accountPart}::${accountStatusPart}::${assignmentPart}::${integrationPart}`;
   }, [adAccountAssignments, adAccounts, apiAccountMappings, googleIntegrationConfigs, metaIntegrationConfigs, shouldShowAdAccountInCsView, tiktokIntegrationConfigs]);
 
   const adAccountCsLookup = useMemo(() => {
@@ -1152,6 +1167,20 @@ export function CSDashboard({ userId }: { userId?: string }) {
       return null;
     };
 
+    const isMappedToInactiveAccount = (row: AdsSnapshotRowLike) => {
+      const platformName = platforms.find((platform) => platform.id === row.platformId)?.name;
+      const platformKey = row.platformKey || resolvePlatformKey(platformName || row.externalAccountName);
+      const externalKeys = buildExternalAccountLookupKeys(platformKey, row.externalAccountId);
+
+      if (externalKeys.some((key) => adAccountLookup.inactiveExternalIds.has(key))) return true;
+      if (externalKeys.some((key) => adAccountLookup.byExternalId.has(key))) return false;
+
+      return Boolean(
+        row.internalAdAccountId &&
+        adAccountLookup.inactiveInternalIds.has(row.internalAdAccountId),
+      );
+    };
+
     const addSnapshotRows = (
       resultByDate: Record<string, CsAdsDailyMetric>,
       resultByDateAccount: Record<string, CsAdsAccountMetric>,
@@ -1165,6 +1194,10 @@ export function CSDashboard({ userId }: { userId?: string }) {
         if (date < rangeParams.from || date > rangeParams.to) continue;
 
         diagnostics.rawRows += 1;
+
+        // Provider snapshots remain available for audit, but intentionally inactive
+        // internal accounts must not be treated as missing mappings.
+        if (isMappedToInactiveAccount(row)) continue;
 
         const adAccount = resolveAdAccount(row);
         if (!adAccount) {
