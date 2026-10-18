@@ -161,6 +161,21 @@ jobs:
           jq -e '.configured == true and (.incrementalJobId | type == "number") and (.reconcileJobId | type == "number")' \
             ads-sync-cron-result.json >/dev/null
 
+          curl --fail-with-body --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 5 --max-time 300 \
+            -X POST "https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/make-server-f781cd00/ads/sync-run" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -H "x-scheduler-secret: $scheduler_token" \
+            --data '{"triggerSource":"scheduled","forceProviders":false}' \
+            --output ads-sync-cron-smoke.json
+
+          jq -e '
+            (.busy == true and .status == "skipped") or
+            ((.runId | type == "string") and (.status == "succeeded" or .status == "partial"))
+          ' ads-sync-cron-smoke.json >/dev/null
+
       - name: Publish deployment summary
         if: env.HAS_SUPABASE_ACCESS_TOKEN == 'true'
         run: |
