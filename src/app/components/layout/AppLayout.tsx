@@ -617,7 +617,7 @@ export function AppLayout() {
       case 'proof-assets':
         return <ProofAssetLibraryPage />;
       case 'orders':
-        return <Pesanan onNavigate={handleNavigate} />;
+        return <Pesanan />;
       case 'daily-report':
         return <Laporan />;
       case 'cs-okr-report':

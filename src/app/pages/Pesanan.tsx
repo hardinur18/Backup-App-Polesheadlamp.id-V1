@@ -169,7 +169,7 @@ const toLocalDateKey = (date: Date) => {
 const uniqueById = <T extends { id: string }>(items: T[]) =>
   Array.from(new Map(items.map((item) => [item.id, item])).values());
 
-export function Pesanan({ onNavigate }: { onNavigate?: (id: string) => void }) {
+export function Pesanan() {
   // --- Context & Permissions ---
   const {
     orders = [],
@@ -206,6 +206,10 @@ export function Pesanan({ onNavigate }: { onNavigate?: (id: string) => void }) {
   const [vehicleNameFallbackMap, setVehicleNameFallbackMap] = useState<Record<string, string>>({});
   const [userLookupFallbackMap, setUserLookupFallbackMap] = useState<Record<string, Pick<User, 'id' | 'name' | 'phone' | 'branchId'>>>({});
   const [branchLookupFallbackMap, setBranchLookupFallbackMap] = useState<Record<string, Pick<Branch, 'id' | 'name' | 'code' | 'city' | 'status'>>>({});
+
+  const openWhatsAppTemplateManager = useCallback(() => {
+    window.location.assign('/leads/templates');
+  }, []);
 
   const nonScheduleLeadIds = useMemo(
     () => new Set(
@@ -1335,8 +1339,18 @@ export function Pesanan({ onNavigate }: { onNavigate?: (id: string) => void }) {
                     variant="ghost"
                     size="icon"
                     className="h-6 w-6 -mr-2 -mt-1 text-slate-400 hover:bg-transparent hover:text-slate-600"
-                    onClick={() => onNavigate?.('wa-templates')}
                     title="Kelola template"
+                    aria-label="Kelola template WhatsApp"
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      openWhatsAppTemplateManager();
+                    }}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      openWhatsAppTemplateManager();
+                    }}
                   >
                     <Settings className="h-3.5 w-3.5" />
                   </Button>
