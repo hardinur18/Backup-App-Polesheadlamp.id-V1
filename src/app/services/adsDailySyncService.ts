@@ -219,7 +219,7 @@ export const ADS_DAILY_SYNC_HISTORY_UPDATED_EVENT = 'rhi:ads-sync-history-update
 export type AdsDailySyncUpdateHistory = {
   recent: AdsDailySyncHistoryItem[];
   lastUpdate: AdsDailySyncHistoryItem | null;
-  source: 'database' | 'local';
+  source: 'backend' | 'database' | 'unavailable';
 };
 
 export const hasAdsSyncDataChanges = (item: AdsDailySyncHistoryItem) =>
@@ -667,6 +667,34 @@ export async function fetchRecentAdsDailySyncRuns(limit = 5): Promise<AdsDailySy
 
 export async function fetchAdsDailySyncUpdateHistory(): Promise<AdsDailySyncUpdateHistory> {
   try {
+    const response = await fetchWithTimeout(
+      buildMakeServerUrl('/ads/sync-status'),
+      { headers: await getSessionBackedEdgeHeaders() },
+      20_000,
+      'Status sinkron iklan belum merespons.',
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || 'Status sinkron iklan belum dapat dibaca.');
+
+    const recentRows = Array.isArray(payload.recent)
+      ? payload.recent.map(mapSyncRunFromDbRow)
+      : [];
+    const lastUpdateRow = payload.lastUpdate
+      ? mapSyncRunFromDbRow(payload.lastUpdate)
+      : null;
+    writeLocalSyncHistory(
+      lastUpdateRow
+        ? [...recentRows.filter((row) => row.id !== lastUpdateRow.id), lastUpdateRow]
+        : recentRows,
+    );
+    return { recent: recentRows, lastUpdate: lastUpdateRow, source: 'backend' };
+  } catch (backendError) {
+    if (import.meta.env.DEV) {
+      console.warn('[adsDailySync] backend sync status unavailable', backendError);
+    }
+  }
+
+  try {
     // A completed no-op run still means the provider data was checked successfully.
     const [recent, lastUpdate] = await Promise.all([
       supabase.from('daily_ads_sync_runs').select('*')
@@ -682,11 +710,10 @@ export async function fetchAdsDailySyncUpdateHistory(): Promise<AdsDailySyncUpda
     writeLocalSyncHistory(lastUpdateRow ? [...recentRows.filter((row) => row.id !== lastUpdateRow.id), lastUpdateRow] : recentRows);
     return { recent: recentRows, lastUpdate: lastUpdateRow, source: 'database' };
   } catch {
-    const localRows = readLocalSyncHistory();
     return {
-      recent: localRows.slice(0, 5),
-      lastUpdate: localRows.find(hasAdsSyncDataChanges) || null,
-      source: 'local',
+      recent: [],
+      lastUpdate: null,
+      source: 'unavailable',
     };
   }
 }

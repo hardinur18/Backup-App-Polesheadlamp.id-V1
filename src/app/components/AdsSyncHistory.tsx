@@ -79,8 +79,8 @@ export function AdsSyncHistory({ isSyncing = false }: { isSyncing?: boolean }) {
           </button>
         )}
       </div>
-      {history?.source === 'local' && (
-        <p className="adsSyncHistoryWarning">Riwayat database belum tersedia. Menampilkan catatan lokal.</p>
+      {history?.source === 'unavailable' && (
+        <p className="adsSyncHistoryWarning">Status sinkron belum dapat dibaca. Coba muat ulang halaman.</p>
       )}
       {lastUpdate && (
         <div className="adsSyncHistoryDetails" id={historyId} hidden={!expanded}>

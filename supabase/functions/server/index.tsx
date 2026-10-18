@@ -2072,6 +2072,44 @@ function isTrustedAdsSchedulerRequest(c: any) {
   return Boolean(expected && provided && expected === provided);
 }
 
+app.get("/make-server-f781cd00/ads/sync-status", async (c) => {
+  const auth = await requireAuthorizedRequester(c, ADS_REFERENCE_READ_PERMISSIONS);
+  if (auth.response) return auth.response;
+
+  const [recentResult, lastUpdateResult, runtimeResult] = await Promise.all([
+    supabase
+      .from("daily_ads_sync_runs")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(5),
+    supabase
+      .from("daily_ads_sync_runs")
+      .select("*")
+      .eq("run_kind", "commit")
+      .in("status", ["succeeded", "partial"])
+      .order("finished_at", { ascending: false })
+      .limit(1),
+    supabase
+      .from("ads_sync_runtime")
+      .select("last_run_id,last_started_at,last_finished_at,last_success_at,last_status,last_error")
+      .eq("id", "daily-ads")
+      .maybeSingle(),
+  ]);
+
+  const queryError = recentResult.error || lastUpdateResult.error || runtimeResult.error;
+  if (queryError) {
+    console.error("Ads sync status query failed:", queryError);
+    return c.json({ error: "Status sinkron iklan belum dapat dibaca." }, 500);
+  }
+
+  return c.json({
+    recent: recentResult.data || [],
+    lastUpdate: lastUpdateResult.data?.[0] || null,
+    runtime: runtimeResult.data || null,
+    checkedAt: new Date().toISOString(),
+  });
+});
+
 app.post("/make-server-f781cd00/ads/sync-run", async (c) => {
   const trustedScheduler = isTrustedAdsSchedulerRequest(c);
   const auth = trustedScheduler
