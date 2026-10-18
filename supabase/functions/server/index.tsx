@@ -2127,6 +2127,28 @@ app.get("/make-server-f781cd00/ads/sync-status", async (c) => {
   });
 });
 
+app.get("/make-server-f781cd00/ads/sync-health", async (c) => {
+  const { data, error } = await supabase
+    .from("ads_sync_runtime")
+    .select("last_started_at,last_finished_at,last_success_at,last_status,scheduler_token_hash")
+    .eq("id", "daily-ads")
+    .maybeSingle();
+
+  if (error) {
+    return c.json({ ok: false, error: "Ads sync health is unavailable." }, 503);
+  }
+
+  return c.json({
+    ok: Boolean(data?.last_success_at),
+    scheduler: data?.scheduler_token_hash ? "database-cron" : "not-configured",
+    lastStartedAt: data?.last_started_at || null,
+    lastFinishedAt: data?.last_finished_at || null,
+    lastSuccessAt: data?.last_success_at || null,
+    lastStatus: data?.last_status || null,
+    checkedAt: new Date().toISOString(),
+  });
+});
+
 app.post("/make-server-f781cd00/ads/sync-run", async (c) => {
   const trustedScheduler = await isTrustedAdsSchedulerRequest(c);
   const auth = trustedScheduler
