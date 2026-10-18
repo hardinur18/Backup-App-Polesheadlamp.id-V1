@@ -23,7 +23,7 @@ import { Progress } from "@/app/components/ui/progress";
 import { cn } from "@/app/components/ui/utils";
 import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths } from 'date-fns';
 import { id } from 'date-fns/locale';
-import { isClosedOrderLike } from './openclaw-foundation';
+import { isCompletedOrderLike } from './openclaw-foundation';
 import { getSessionBackedEdgeHeaders } from '@/app/services/internal/sessionClientHeaders';
 import { buildMakeServerUrl } from '@/app/services/internal/functionsBaseUrl';
 import { isAdvertiserRole, isCsRole, isTechnicianRole } from '@/app/data/roleHelpers';
@@ -51,6 +51,7 @@ export function MarketingMonitoringPage() {
       adAccountAssignments = [],
       adAccountOwnerAssignments = [],
       currentUser,
+      ensureOrdersForDateRange,
   } = useMasterData();
 
   const { hasPermission } = usePermissions();
@@ -65,6 +66,16 @@ export function MarketingMonitoringPage() {
   const [targetRefresh, setTargetRefresh] = useState(0);
   const [dbTargets, setDbTargets] = useState<any[]>([]);
   const [visibleDayLimit, setVisibleDayLimit] = useState(8);
+
+  React.useEffect(() => {
+    void ensureOrdersForDateRange({
+      from: format(startOfMonth(selectedMonth), 'yyyy-MM-dd'),
+      to: format(endOfMonth(selectedMonth), 'yyyy-MM-dd'),
+      mode: 'created',
+    }).catch((error) => {
+      console.error('Failed to fetch monthly orders for ads monitoring', error);
+    });
+  }, [ensureOrdersForDateRange, selectedMonth]);
 
   // FETCH TARGETS
   React.useEffect(() => {
@@ -255,7 +266,7 @@ export function MarketingMonitoringPage() {
         if (orderDate < start || orderDate > end) return;
 
         totalLeads += 1;
-        const closed = isClosedOrderLike(order);
+        const closed = isCompletedOrderLike(order);
         if (closed) totalClosing += 1;
 
         if (order.advertiserId) {
@@ -476,7 +487,7 @@ export function MarketingMonitoringPage() {
         let totalClosing = 0;
         let totalOmzet = 0;
         scopedDayOrders.forEach((order) => {
-          if (!isClosedOrderLike(order)) return;
+          if (!isCompletedOrderLike(order)) return;
           totalClosing += 1;
           totalOmzet += order.price || 0;
         });
@@ -562,7 +573,7 @@ export function MarketingMonitoringPage() {
 
         // 1. Marketing Stats (Based on SCOPED orders)
         const totalLeads = scopedBranchOrders.length;
-        const closingOrders = scopedBranchOrders.filter(o => isClosedOrderLike(o));
+        const closingOrders = scopedBranchOrders.filter(o => isCompletedOrderLike(o));
         const totalClosing = closingOrders.length;
         const omzet = closingOrders.reduce((acc, curr) => acc + (curr.price || 0), 0);
         
@@ -592,13 +603,13 @@ export function MarketingMonitoringPage() {
             if (order.csId) {
               const current = scopedBranchOrdersByCs.get(order.csId) || { leads: 0, closing: 0 };
               current.leads += 1;
-              if (isClosedOrderLike(order)) current.closing += 1;
+              if (isCompletedOrderLike(order)) current.closing += 1;
               scopedBranchOrdersByCs.set(order.csId, current);
             }
             if (order.platformId) {
               const current = scopedBranchOrdersByPlatform.get(order.platformId) || { leads: 0, closing: 0 };
               current.leads += 1;
-              if (isClosedOrderLike(order)) current.closing += 1;
+              if (isCompletedOrderLike(order)) current.closing += 1;
               scopedBranchOrdersByPlatform.set(order.platformId, current);
             }
           });
@@ -697,7 +708,7 @@ export function MarketingMonitoringPage() {
           if (order.csId) {
             const current = scopedDayOrdersByCs.get(order.csId) || { leads: 0, closing: 0, omzet: 0 };
             current.leads += 1;
-            if (isClosedOrderLike(order)) {
+            if (isCompletedOrderLike(order)) {
               current.closing += 1;
               current.omzet += order.price || 0;
             }
@@ -706,7 +717,7 @@ export function MarketingMonitoringPage() {
           if (order.platformId) {
             const current = scopedDayOrdersByPlatform.get(order.platformId) || { leads: 0, closing: 0 };
             current.leads += 1;
-            if (isClosedOrderLike(order)) current.closing += 1;
+            if (isCompletedOrderLike(order)) current.closing += 1;
             scopedDayOrdersByPlatform.set(order.platformId, current);
           }
         });

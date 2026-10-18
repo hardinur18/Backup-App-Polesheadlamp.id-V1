@@ -76,6 +76,7 @@ import {
   getAdsSyncHistoryOutcome,
   hasAdsSyncDataChanges,
 } from './src/app/services/adsDailySyncService.ts';
+import { isCompletedOrderLike } from './src/app/pages/ads/openclaw-foundation/contracts.ts';
 
 const tests = [];
 
@@ -159,6 +160,13 @@ const basePreviewRow = (overrides = {}) => ({
   status: 'new',
   reason: '',
   ...overrides,
+});
+
+test('ads monitoring only counts final orders as completed', () => {
+  assert.equal(isCompletedOrderLike(baseOrder({ status: 'done' })), true);
+  assert.equal(isCompletedOrderLike(baseOrder({ status: 'pending', paymentStatus: 'Paid' })), false);
+  assert.equal(isCompletedOrderLike(baseOrder({ status: 'processing', paymentStatus: 'Down Payment' })), false);
+  assert.equal(isCompletedOrderLike(baseOrder({ status: 'teknisi_completed' })), false);
 });
 
 test('order schedule conflict map catches active order and booking in same slot', () => {

@@ -114,10 +114,17 @@ export type AdsMonitoringAuditEvent = {
 
 export const CLOSED_PAYMENT_STATUSES = ['Paid', 'Down Payment'] as const;
 
+export const ADS_MONITORING_COMPLETED_STATUSES = ['done'] as const;
+
 export const isClosedOrderLike = (order: Pick<Order, 'status' | 'paymentStatus'>) =>
   ADS_MONITORING_CLOSING_STATUSES.includes(
     order.status as (typeof ADS_MONITORING_CLOSING_STATUSES)[number],
   ) || CLOSED_PAYMENT_STATUSES.includes(order.paymentStatus as (typeof CLOSED_PAYMENT_STATUSES)[number]);
+
+export const isCompletedOrderLike = (order: Pick<Order, 'status' | 'effectiveStatus'>) =>
+  ADS_MONITORING_COMPLETED_STATUSES.includes(
+    (order.effectiveStatus || order.status) as (typeof ADS_MONITORING_COMPLETED_STATUSES)[number],
+  );
 
 export const getOrderCreatedDateKey = (order: Pick<Order, 'created_at' | 'leadDate'>) =>
   order.created_at?.slice(0, 10) || order.leadDate || null;

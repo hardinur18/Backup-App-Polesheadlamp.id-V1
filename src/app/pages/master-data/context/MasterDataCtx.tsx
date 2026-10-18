@@ -340,7 +340,7 @@ interface MasterDataContextType {
   isOperationalDataLoading: boolean;
   isOrdersLoading: boolean;
   isLeadsLoading: boolean;
-  ensureOrdersForDateRange: (range: { from: string; to: string; mode?: 'service' | 'lead'; technicianId?: string }) => Promise<void>;
+  ensureOrdersForDateRange: (range: { from: string; to: string; mode?: 'service' | 'lead' | 'created'; technicianId?: string }) => Promise<void>;
   ensureLeadsForDateRange: (range: { from: string; to: string }) => Promise<void>;
   ensureProspectBookingsForDateRange: (range: { from: string; to: string }) => Promise<void>;
   ensureTechnicianSchedulesForDateRange: (range: { from: string; to: string }) => Promise<void>;
@@ -1152,22 +1152,29 @@ export const MasterDataProvider: React.FC<{
   }: {
     from: string;
     to: string;
-    mode?: 'service' | 'lead';
+    mode?: 'service' | 'lead' | 'created';
     technicianId?: string;
   }) => {
     if (!from || !to) return;
 
-    const column = mode === 'lead' ? 'lead_date' : 'service_date';
+    const column = mode === 'created'
+      ? 'created_at'
+      : mode === 'lead'
+        ? 'lead_date'
+        : 'service_date';
     const rangeKey = `${mode}:${from}:${to}:${technicianId || 'all'}`;
     if (fetchedOrderDateRangesRef.current.has(rangeKey)) return;
     const inFlight = fetchingOrderDateRangesRef.current.get(rangeKey);
     if (inFlight) return inFlight;
 
+    const dateRange = mode === 'created'
+      ? toBusinessDayUtcRange(from, to)
+      : { fromIso: from, toIso: to };
     const appDataOptions: AppDataPageOptions = {
       orderBy: column,
       ascending: false,
-      gte: { [column]: from },
-      lte: { [column]: to },
+      gte: { [column]: dateRange.fromIso },
+      lte: { [column]: dateRange.toIso },
     };
     if (technicianId) {
       appDataOptions.eq = { technician_id: technicianId };
