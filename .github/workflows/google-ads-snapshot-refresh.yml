@@ -1,15 +1,24 @@
 name: Ads Daily Automatic Sync
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/google-ads-snapshot-refresh.yml'
   schedule:
     - cron: '*/15 * * * *'
     - cron: '17 19 * * *'
   workflow_dispatch:
 
+env:
+  PRODUCTION_SUPABASE_PROJECT_REF: dhnxwrteolnjdrxlmgwi
+  SUPABASE_URL: https://dhnxwrteolnjdrxlmgwi.supabase.co
+
 jobs:
   sync_incremental:
     name: Sync Today and Yesterday
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '*/15 * * * *'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.schedule == '*/15 * * * *'
     runs-on: ubuntu-latest
     concurrency:
       group: ads-daily-sync
@@ -17,7 +26,6 @@ jobs:
     permissions:
       contents: read
     env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
     steps:
@@ -26,6 +34,23 @@ jobs:
           test -n "$SUPABASE_URL"
           test -n "$SUPABASE_ANON_KEY"
           test -n "$SUPABASE_SERVICE_ROLE_KEY"
+          node <<'NODE'
+          const expectedRef = process.env.PRODUCTION_SUPABASE_PROJECT_REF;
+          const expectedUrl = `https://${expectedRef}.supabase.co`;
+          if (process.env.SUPABASE_URL !== expectedUrl) {
+            throw new Error(`Scheduler target must be ${expectedUrl}`);
+          }
+
+          for (const name of ['SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY']) {
+            const token = process.env[name] || '';
+            const payloadPart = token.split('.')[1];
+            if (!payloadPart) continue;
+            const payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'));
+            if (payload.ref && payload.ref !== expectedRef) {
+              throw new Error(`${name} belongs to Supabase project ${payload.ref}, expected ${expectedRef}`);
+            }
+          }
+          NODE
 
       - name: Run incremental ads sync
         run: |
@@ -37,6 +62,11 @@ jobs:
             -H "x-service-role-key: $SUPABASE_SERVICE_ROLE_KEY" \
             --data '{"triggerSource":"scheduled","forceProviders":false}' \
             --output ads-sync-result.json
+
+          jq -e '
+            (.busy == true and .status == "skipped") or
+            ((.runId | type == "string") and (.status == "succeeded" or .status == "partial"))
+          ' ads-sync-result.json >/dev/null
 
       - name: Publish summary
         if: always()
@@ -60,7 +90,6 @@ jobs:
     permissions:
       contents: read
     env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
     steps:
@@ -69,6 +98,23 @@ jobs:
           test -n "$SUPABASE_URL"
           test -n "$SUPABASE_ANON_KEY"
           test -n "$SUPABASE_SERVICE_ROLE_KEY"
+          node <<'NODE'
+          const expectedRef = process.env.PRODUCTION_SUPABASE_PROJECT_REF;
+          const expectedUrl = `https://${expectedRef}.supabase.co`;
+          if (process.env.SUPABASE_URL !== expectedUrl) {
+            throw new Error(`Scheduler target must be ${expectedUrl}`);
+          }
+
+          for (const name of ['SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY']) {
+            const token = process.env[name] || '';
+            const payloadPart = token.split('.')[1];
+            if (!payloadPart) continue;
+            const payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8'));
+            if (payload.ref && payload.ref !== expectedRef) {
+              throw new Error(`${name} belongs to Supabase project ${payload.ref}, expected ${expectedRef}`);
+            }
+          }
+          NODE
 
       - name: Reconcile recent ads data
         run: |
@@ -80,6 +126,11 @@ jobs:
             -H "x-service-role-key: $SUPABASE_SERVICE_ROLE_KEY" \
             --data '{"triggerSource":"reconcile","forceProviders":true}' \
             --output ads-sync-result.json
+
+          jq -e '
+            (.busy == true and .status == "skipped") or
+            ((.runId | type == "string") and (.status == "succeeded" or .status == "partial"))
+          ' ads-sync-result.json >/dev/null
 
       - name: Publish summary
         if: always()
