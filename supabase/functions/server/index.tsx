@@ -1014,6 +1014,9 @@ async function fetchMetaInsightsBatch(
         time_range: JSON.stringify({ since: from, until: to }),
         limit: "1",
       });
+      authParams.forEach((value, key) => {
+        params.set(key, value);
+      });
 
       return {
         method: "GET",
@@ -1087,6 +1090,9 @@ async function fetchMetaDailyInsightsBatch(
         time_increment: "1",
         time_range: JSON.stringify({ since: from, until: to }),
         limit: "500",
+      });
+      authParams.forEach((value, key) => {
+        params.set(key, value);
       });
 
       return {
