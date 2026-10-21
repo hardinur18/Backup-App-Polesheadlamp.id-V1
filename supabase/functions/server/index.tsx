@@ -1156,7 +1156,8 @@ async function fetchMetaDailyInsightsBatch(
         const hasDelivery =
           toNumber(metrics.clicks) > 0 ||
           toNumber(metrics.impressions) > 0 ||
-          toNumber(metrics.reach) > 0;
+          toNumber(metrics.reach) > 0 ||
+          extractMetaMessagingResultValue(metrics.actions) > 0;
         if (!snapshotDate || toNumber(metrics.spend) > 0 || !hasDelivery) continue;
 
         const dateAccounts = suspiciousAccountsByDate.get(snapshotDate) || [];
