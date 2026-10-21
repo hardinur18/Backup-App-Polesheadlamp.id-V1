@@ -1146,6 +1146,52 @@ async function fetchMetaDailyInsightsBatch(
     });
   }
 
+  if (from !== to) {
+    const suspiciousAccountsByDate = new Map<string, MetaAdAccountRecord[]>();
+
+    for (const account of accounts) {
+      const result = insightsByAccountId.get(account.id);
+      for (const metrics of result?.metrics || []) {
+        const snapshotDate = metrics.date_start || metrics.date_stop;
+        const hasDelivery =
+          toNumber(metrics.clicks) > 0 ||
+          toNumber(metrics.impressions) > 0 ||
+          toNumber(metrics.reach) > 0;
+        if (!snapshotDate || toNumber(metrics.spend) > 0 || !hasDelivery) continue;
+
+        const dateAccounts = suspiciousAccountsByDate.get(snapshotDate) || [];
+        if (!dateAccounts.some((item) => item.id === account.id)) {
+          dateAccounts.push(account);
+        }
+        suspiciousAccountsByDate.set(snapshotDate, dateAccounts);
+      }
+    }
+
+    for (const [snapshotDate, suspiciousAccounts] of suspiciousAccountsByDate) {
+      const retryMap = await fetchMetaDailyInsightsBatch(
+        suspiciousAccounts,
+        snapshotDate,
+        snapshotDate,
+        accessToken,
+      );
+
+      for (const account of suspiciousAccounts) {
+        const current = insightsByAccountId.get(account.id);
+        const retried = retryMap.get(account.id);
+        const retriedMetrics = (retried?.metrics || []).find(
+          (metrics) => (metrics.date_start || metrics.date_stop) === snapshotDate,
+        );
+        if (!current || !retriedMetrics || toNumber(retriedMetrics.spend) <= 0) continue;
+
+        current.metrics = current.metrics.map((metrics) =>
+          (metrics.date_start || metrics.date_stop) === snapshotDate ? retriedMetrics : metrics
+        );
+        current.error = retried?.error || current.error;
+        insightsByAccountId.set(account.id, current);
+      }
+    }
+  }
+
   return insightsByAccountId;
 }
 
